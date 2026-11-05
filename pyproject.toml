@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "talos"
+version = "0.0.1"
+description = "TALOS: Monte Carlo engagement sim for space-based laser debris removal"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+tle = ["sgp4>=2.22"]
+atmos = ["pymsis"]
+sweep = ["pandas", "pyarrow", "joblib"]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
