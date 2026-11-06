@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from . import _kernels
 from .constants import MU_EARTH, R_EARTH
 from .debris import DebrisPopulation
 from .elements import KeplerElements
@@ -148,6 +149,7 @@ def screen_windows(
     min_steps: int = 1,
     batch: int = 1000,
     coarse_step_s: float | None = 30.0,
+    use_kernel: bool | None = None,
 ) -> list[Window]:
     """Memory-bounded screening: windows only, objects processed in batches.
 
@@ -158,6 +160,10 @@ def screen_windows(
     idx = np.arange(len(population)) if candidates is None else np.asarray(candidates)
     rmax = platform.atp.engage_range_max_m
     idx = idx[apsis_filter(platform.orbit, population.elements[idx], rmax)]
+    if use_kernel is None:
+        use_kernel = _kernels.HAVE_NUMBA
+    if use_kernel and len(idx) and len(t) > 1:
+        return _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_s)
     if coarse_step_s is not None and len(idx) and len(t) > 1:
         keep = np.zeros(len(idx), dtype=bool)
         for k in range(0, len(idx), 4 * batch):
@@ -176,6 +182,33 @@ def screen_windows(
         mask = screen_fine(t, r_s, v_s, r_d, v_d, platform.atp).mask
         out += [Window(int(cols[w.debris_index]), w.start, w.stop) for w in find_windows(mask, min_steps)]
     return out
+
+
+def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_s) -> list[Window]:
+    """Numba path: parallel coarse sieve, then parallel fused fine gates."""
+    atp = platform.atp
+    rmax = atp.engage_range_max_m
+    sub = population.elements[idx]
+    args = _kernels.element_args(sub, population.ballistic_coeff[idx])
+    if coarse_step_s is not None:
+        n = max(1, int(np.ceil((t[-1] - t[0]) / coarse_step_s)))
+        tc = np.linspace(t[0], t[-1], n + 1)
+        r_sc, _ = states_at(platform.orbit, tc)
+        vmax = np.ascontiguousarray(max_speed(platform.orbit) + max_speed(sub), dtype=float)
+        keep = _kernels.sieve_kernel(tc, np.ascontiguousarray(r_sc), vmax, rmax, *args)
+        idx = idx[keep]
+        args = tuple(x[keep] for x in args)
+    if not len(idx):
+        return []
+    r_s, v_s = states_at(platform.orbit, t)
+    half = atp.field_of_regard_half_angle_rad
+    cos_for = -1.0 if half >= np.pi else float(np.cos(half))
+    mask = _kernels.fine_mask_kernel(
+        np.asarray(t, float), np.ascontiguousarray(r_s), np.ascontiguousarray(v_s),
+        atp.engage_range_min_m, rmax, R_EARTH + atp.earth_clearance_alt_m, cos_for,
+        atp.slew_rate_limit_rad_s, *args,
+    )
+    return [Window(int(idx[w.debris_index]), w.start, w.stop) for w in find_windows(mask, min_steps)]
 
 
 def screen(

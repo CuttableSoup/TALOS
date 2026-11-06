@@ -1,7 +1,7 @@
 """Module 9 — metrics + sweep driver.
 
 Depletion check: N * R0 = n0 * ln(10) / T for 90% removal in T years.
-TODO: sweep driver (joblib over the README matrix -> parquet).
+Sweep driver lives in talos.sweep.
 """
 
 from __future__ import annotations
@@ -46,4 +46,7 @@ def raw_encounter_rate(
 
 
 def run_sweep(*args, **kwargs):
-    raise NotImplementedError("module 9")
+    """See :func:`talos.sweep.run_sweep`."""
+    from .sweep import run_sweep as _run
+
+    return _run(*args, **kwargs)

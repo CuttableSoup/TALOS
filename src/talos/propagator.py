@@ -102,7 +102,20 @@ def propagate(el: KeplerElements, dt, ballistic_coeff=None) -> KeplerElements:
     )
 
 
-def states_at(el: KeplerElements, t, ballistic_coeff=None) -> tuple[np.ndarray, np.ndarray]:
-    """ECI states at times ``t`` [s since epoch], shape ``(len(t),) + el.shape + (3,)``."""
-    t = np.asarray(t, dtype=float).reshape((-1,) + (1,) * len(el.shape))
+_KERNEL_MIN_SIZE = 20_000  # T*N above which the numba kernel beats numpy
+
+
+def states_at(el: KeplerElements, t, ballistic_coeff=None, use_kernel: bool | None = None):
+    """ECI states at times ``t`` [s since epoch], shape ``(len(t),) + el.shape + (3,)``.
+
+    Large 1-D element sets use the multithreaded numba kernel when available.
+    """
+    from . import _kernels
+
+    t = np.asarray(t, dtype=float).reshape(-1)
+    if use_kernel is None:
+        use_kernel = _kernels.HAVE_NUMBA and len(el.shape) == 1 and t.size * el.shape[0] >= _KERNEL_MIN_SIZE
+    if use_kernel:
+        return _kernels.states_kernel(t, *_kernels.element_args(el, ballistic_coeff))
+    t = t.reshape((-1,) + (1,) * len(el.shape))
     return elements_to_rv(propagate(el, t, ballistic_coeff))
