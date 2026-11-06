@@ -118,3 +118,26 @@ def test_screen_toy_population_runs(rng):
                   "w = v_rel*b/r^2 implies b ~ 9 km for 2 deg/s at 63 km with v_rel ~ 15 km/s")
 def test_gate3_slew_limit_head_on():
     pass
+
+
+@pytest.mark.parametrize("coarse", [10.0, 30.0, 120.0])
+def test_coarse_sieve_matches_brute_force(coarse):
+    from talos.screening import screen_windows
+
+    pop = toy_population(3000, np.random.default_rng(3))
+    sat = baseline_platform(800.0)
+    t = np.arange(0.0, 900.0, 1.0)
+    as_tuples = lambda ws: sorted((w.debris_index, w.start, w.stop) for w in ws)
+    brute = as_tuples(screen_windows(sat, pop, t, coarse_step_s=None))
+    sieved = as_tuples(screen_windows(sat, pop, t, coarse_step_s=coarse))
+    assert len(brute) > 0
+    assert sieved == brute
+
+
+def test_coarse_sieve_prunes_most_objects():
+    from talos.screening import coarse_sieve
+
+    pop = toy_population(5000, np.random.default_rng(4))
+    sat = baseline_platform(800.0)
+    keep = coarse_sieve(sat.orbit, pop.elements, pop.ballistic_coeff, np.arange(0.0, 600.0), 500e3, 30.0)
+    assert keep.mean() < 0.2

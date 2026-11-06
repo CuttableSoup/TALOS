@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .constants import R_EARTH
+from .constants import MU_EARTH, R_EARTH
 from .debris import DebrisPopulation
 from .elements import KeplerElements
 from .platform import ATPConfig, Platform
@@ -110,6 +110,36 @@ def find_windows(mask: np.ndarray, min_steps: int = 1) -> list[Window]:
     ]
 
 
+def max_speed(el: KeplerElements) -> np.ndarray:
+    """Upper bound on orbital speed [m/s]: vis-viva at perigee."""
+    return np.sqrt(MU_EARTH * (2.0 / el.rp - 1.0 / el.a))
+
+
+def coarse_sieve(
+    sat: KeplerElements,
+    deb: KeplerElements,
+    ballistic_coeff,
+    t: np.ndarray,
+    max_range_m: float,
+    coarse_step_s: float,
+) -> np.ndarray:
+    """Objects that *may* come within ``max_range_m`` during [t[0], t[-1]].
+
+    Range is Lipschitz with constant v_max = v_sat,max + v_deb,max, so over a
+    coarse interval of length h the minimum range is at least
+    (rho_k + rho_{k+1} - v_max h) / 2. Conservative: never drops a true window.
+    """
+    n = max(1, int(np.ceil((t[-1] - t[0]) / coarse_step_s)))
+    tc = np.linspace(t[0], t[-1], n + 1)
+    h = tc[1] - tc[0] if n > 0 else 0.0
+    r_s, _ = states_at(sat, tc)
+    r_d, _ = states_at(deb, tc, ballistic_coeff)
+    rho = np.linalg.norm(r_d - r_s[:, None, :], axis=-1)  # (n+1, N)
+    vmax = max_speed(sat) + max_speed(deb)
+    lower = 0.5 * (rho[:-1] + rho[1:] - vmax * h) if n > 0 else rho
+    return np.any(lower <= max_range_m, axis=0) | np.any(rho <= max_range_m, axis=0)
+
+
 def screen_windows(
     platform: Platform,
     population: DebrisPopulation,
@@ -117,14 +147,26 @@ def screen_windows(
     candidates: np.ndarray | None = None,
     min_steps: int = 1,
     batch: int = 1000,
+    coarse_step_s: float | None = 30.0,
 ) -> list[Window]:
     """Memory-bounded screening: windows only, objects processed in batches.
 
     ``candidates`` optionally restricts to these population indices (e.g. not yet removed).
+    ``coarse_step_s`` enables the conservative coarse sieve (None = fine-step everything).
     Window ``debris_index`` refers to the original population index.
     """
     idx = np.arange(len(population)) if candidates is None else np.asarray(candidates)
-    idx = idx[apsis_filter(platform.orbit, population.elements[idx], platform.atp.engage_range_max_m)]
+    rmax = platform.atp.engage_range_max_m
+    idx = idx[apsis_filter(platform.orbit, population.elements[idx], rmax)]
+    if coarse_step_s is not None and len(idx) and len(t) > 1:
+        keep = np.zeros(len(idx), dtype=bool)
+        for k in range(0, len(idx), 4 * batch):
+            cols = idx[k : k + 4 * batch]
+            keep[k : k + 4 * batch] = coarse_sieve(
+                platform.orbit, population.elements[cols], population.ballistic_coeff[cols],
+                t, rmax, coarse_step_s,
+            )
+        idx = idx[keep]
     r_s, v_s = states_at(platform.orbit, t)
     out: list[Window] = []
     for k in range(0, len(idx), batch):
