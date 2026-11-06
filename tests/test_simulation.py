@@ -21,7 +21,7 @@ def coorbital_pop(sat, dM_deg, mu=1.0):
 def test_trailing_object_is_engaged_and_lowered():
     sat = baseline_platform(800.0)
     pop = coorbital_pop(sat, [-1.5, 1.5])  # ~190 km behind / ahead
-    res = run_engagements([sat], pop, duration_s=600.0, params=AblationParams(eta1_range=(1, 1)))
+    res = run_engagements([sat], pop, duration_s=600.0, params=AblationParams(eta1_mean=1.0, off_axis_mean_rad=0.0, off_axis_sigma_rad=0.0))
     assert all(e.t_stop - e.t_start >= sat.resources.min_burst_s - 1e-9 for e in res.events)
     targets = {e.debris_index for e in res.events}
     assert targets == {0}  # pushing the leading object would be prograde

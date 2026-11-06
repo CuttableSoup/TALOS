@@ -47,7 +47,8 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 - Burst power: 5, 10, 20, 30, 50 kW
 - Sats: 1, 2, 4, 8
 - Orbits: all 800 km vs staggered 700/800/900
-- Cm: 30, 100
+- Cm: 25, 50, 100 N/MW
+- η₂: 0.3, 0.4, 0.67
 - μ: 0.2, 1, 10 kg/m²
 
 ## Validation gates (in order)
@@ -82,12 +83,14 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 ## Placeholders (replace with sourced values — see research prompt)
 | Parameter | Where | Value | Basis |
 |---|---|---|---|
-| η₂ (transmission × Strehl) | `LaserConfig.eta2` | 0.35 | back-solved: threshold range ≈ 325 km |
-| Cm model | `AblationParams.cm_model` | plasma | log ramp to φ_opt, then ∝ φ^-1/4 (Phipps) |
-| Cm peak | `AblationParams.cm` | 30 µN·s/J | README conservative end |
-| φ_opt | `AblationParams.phi_opt_factor` | 3 × threshold | guess |
-| η₁ | `AblationParams.eta1_range` | U(0.3, 1.0) | guess |
-| Δv off-axis angle | `AblationParams.off_axis_sigma_rad` | half-normal σ=20° | guess |
+| η₂ (fluence efficiency) | `LaserConfig.eta2` | 0.40 (sweep 0.3–0.67) | **sourced**: backed out of L'ADROIT spot size + fluence |
+| Fire threshold | `AblationParams.threshold_fluence` | 4.5 kJ/m² | **sourced** (research pass) |
+| φ_opt (Cm peak) | `AblationParams.phi_opt` | 8.5 kJ/m² | **sourced** |
+| Cm model | `AblationParams.cm_model` | plasma: log ramp, then ∝ φ^-1/4 | **sourced** falloff; ramp shape is a guess |
+| Cm peak | `AblationParams.cm` | 50 N/MW (sweep 25–100) | **sourced** range; only ~100 ps Al point is ≤30 N/MW, IR not UV |
+| η₁ | `AblationParams.eta1_mean/kappa` | Beta, mean 0.3, κ=10 | mean **sourced**; spread a guess |
+| Δv off-axis angle | `AblationParams.off_axis_*` | N(45°, 15°) clipped [0, 90°] | centre **sourced**; spread a guess |
+| Debris count in band | `toy_population(n_real=)` | 100k (Phipps) | MASTER all-LEO 1–10 cm ≈ 1.2M; 600–1000 km share unsourced |
 | Settle / retarget | `ATPConfig.settle_s` | 5 s, not overlapped | guess (conservative) |
 | Min burst | `ResourceConfig.min_burst_s` | 5 s | guess |
 | Heat buffer | `ResourceConfig.heat_buffer_j` | 1.5 MJ | ≈ one 10 s burst of net heat |
@@ -97,16 +100,20 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 | Sunlight | `resources.py` | always sunlit | dawn-dusk SSO, eclipse season ignored |
 
 ## Open issues
-- η₂ is back-solved to L'ADROIT's 325 km, so gate 1 is not an independent check yet
-- Gate 4: geometry gives ~500/min within 325 km for 1M objects uniform in
-  600–1000 km (hand check ~780/min) vs ~25/min target — reconcile definition/density
-- Subsampling (README's "5k–50k samples, scale linearly") does not work for a
-  target-saturated greedy platform: results depend on sample density because the
-  scheduler picks the best of what's in view. Toy pop, 1 sat-hour:
-  N=10k→100k→300k→1M gives mean Δv/eng 25→66→71→106 m/s, removals 4→22→31→34.
-  Full density (N=n0) costs ~2 min per sat-hour after the coarse sieve.
-- Removals look implausibly high (~34/hr/sat at 1M, toy pop) — driven by η₂=1,
-  constant Cm at φ≫threshold, μ=1 everywhere, and no retarget/settle time
+- η₁ (mean 0.3) and the 45° thrust angle may double-count: if the sourced η₁ is
+  already a beam-axis average, applying cos(45°) on top cuts Δv by another ~30%
+- Gate 1 not independent (η₂ backed out of the same L'ADROIT numbers)
+- Gate 3: 63 km confirmed (Pieters & Noomen, SDC8 paper 43) but miss distance unstated
+- Gate 4: 38/min within 250 km at 100k objects vs Phipps 19/min; ~2× gap
+  attributed to full-sphere cross-section and relative-speed differences
+- Subsampling invalid for a target-saturated greedy platform: run at full
+  density (N = n_real). At 100k that's ~15 s per 2 sat-hours.
+- Single-engagement Δv at baseline (μ=1, 50 N/MW, η₂=0.4) is ~12 m/s vs
+  ~100–150 m/s needed: removal needs ~10+ engagements per object, so removals/yr
+  hinge on whether the scheduler concentrates on objects; greedy spreads Δv thin
+- `debris_years_removed` is dominated by small Δv on very long-lived (μ=10)
+  objects and depends on the 200-yr cap
 
 ## Next step
-Cm(φ) model, retarget/settle time, η₂ calibration, density strategy (full-density vs encounter-flux sampling), MASTER population (module 1), module 8.
+Removal-aware scheduler scoring (progress toward removal, revisit partially
+lowered objects), then multi-day full-density runs; MASTER population (module 1).

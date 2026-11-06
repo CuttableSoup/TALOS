@@ -63,7 +63,7 @@ def head_on_geometry(R, n=33):
 
 
 def test_head_on_burst_is_fully_retrograde():
-    params = AblationParams(eta1_range=(1.0, 1.0), cm_model="constant")
+    params = AblationParams(eta1_mean=1.0, off_axis_mean_rad=0.0, off_axis_sigma_rad=0.0, cm_model="constant")
     r_s, r_d, v_d = head_on_geometry(200e3)
     res = integrate_burst(r_s, r_d, v_d, LASER, areal_density=1.0, params=params)
     expected = 33 * params.cm * fluence(200e3, LASER) / 1.0
@@ -93,7 +93,7 @@ def test_stochastic_burst_bounded_and_reproducible():
     a = integrate_burst(*geom, LASER, 1.0, params, jitter_rad=0.3e-6, rng=np.random.default_rng(7))
     b = integrate_burst(*geom, LASER, 1.0, params, jitter_rad=0.3e-6, rng=np.random.default_rng(7))
     assert a.dv_retrograde == b.dv_retrograde
-    upper = 330 * params.eta1_range[1] * params.cm * fluence(200e3, LASER)
+    upper = 330 * 1.0 * params.cm * fluence(200e3, LASER)  # eta1 <= 1, cos(angle) <= 1
     assert 0 < a.dv_retrograde < upper
     assert np.linalg.norm(a.dv_vec) <= upper
 
@@ -106,7 +106,7 @@ def test_pulse_times():
 
 def test_plasma_cm_shape():
     p = AblationParams()
-    th, opt = p.threshold_fluence, p.phi_opt_factor * p.threshold_fluence
+    th, opt = p.threshold_fluence, p.phi_opt
     cm = lambda x: float(coupling_coefficient(x, p))
     assert cm(0.99 * th) == 0.0
     assert cm(th) == pytest.approx(0.0, abs=1e-12)
@@ -127,3 +127,21 @@ def test_plasma_burst_dv_below_constant():
 def test_unknown_cm_model():
     with pytest.raises(ValueError):
         coupling_coefficient(1e5, AblationParams(cm_model="nope"))
+
+
+def test_deterministic_burst_is_expectation_of_stochastic():
+    p = AblationParams(cm_model="constant")
+    geom = head_on_geometry(200e3, n=4000)
+    det = integrate_burst(*geom, LASER, 1.0, p)
+    sto = integrate_burst(*geom, LASER, 1.0, p, rng=np.random.default_rng(0))
+    # E[eta1 cos(theta)] vs eta1_mean * cos(mean): equal to within the curvature of cos over sigma=15 deg
+    assert sto.dv_retrograde == pytest.approx(det.dv_retrograde, rel=0.06)
+
+
+def test_eta1_samples():
+    p = AblationParams()
+    x = p.sample_eta1(np.random.default_rng(0), 20000)
+    assert x.mean() == pytest.approx(0.3, abs=0.01)
+    assert x.min() >= 0 and x.max() <= 1
+    th = p.sample_off_axis(np.random.default_rng(1), 20000)
+    assert np.rad2deg(np.median(th)) == pytest.approx(45.0, abs=1.0)

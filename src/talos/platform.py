@@ -24,10 +24,9 @@ class LaserConfig:
     beam_a: float = 1.27  # diffraction constant "a" in the fluence equation
     prf_hz: float = 33.0
     burst_power_w: float = 25e3  # optical power while firing
-    # PLACEHOLDER: optical-train transmission x Strehl. 0.35 is back-solved so the
-    # baseline threshold range is ~325 km (L'ADROIT upper bound) -- replace with
-    # a sourced value (research item 1); gate 1 is not independently checked yet.
-    eta2: float = 0.35
+    # Fluence efficiency. ~0.40 backed out from L'ADROIT's published spot size and
+    # fluence (research pass 2026-11); sweep 0.3-0.67.
+    eta2: float = 0.40
 
     @property
     def pulse_energy_j(self) -> float:

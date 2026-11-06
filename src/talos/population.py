@@ -19,7 +19,7 @@ def toy_population(
     n: int,
     rng: np.random.Generator,
     alt_km: tuple[float, float] = (600.0, 1000.0),
-    n_real: float = 1.0e6,
+    n_real: float = 1.0e5,  # Phipps' ~100k; MASTER all-LEO 1-10 cm is ~1.2M, band share unsourced
     areal_density: float = 1.0,
     min_lifetime_yr: float | None = None,
 ) -> DebrisPopulation:

@@ -18,20 +18,40 @@ from .platform import LaserConfig
 
 @dataclass(frozen=True)
 class AblationParams:
-    cm: float = 30e-6  # N*s/J, peak (at phi_opt) for "plasma"; flat for "constant"
-    threshold_fluence: float = 8.5e3  # J/m^2 (~0.85 J/cm^2 at 100 ps)
-    # Cm(phi) shape. "plasma": log ramp from threshold to phi_opt, then
-    # Cm ~ (phi_opt/phi)^plasma_exponent (Phipps plasma regime, Cm ~ (I lambda sqrt(tau))^-1/4).
+    """Ablation / momentum-coupling model. Defaults from the research pass (2026-11):
+
+    * Fire above ~4.5 kJ/m^2; Cm peaks near 8.5 kJ/m^2, then falls as phi^-1/4.
+    * Peak Cm ~50 N/MW (sweep 25-100). Only ~100 ps Al data point found is
+      <=30 N/MW, and it was IR, not UV.
+    * Shape/tumble: coupling efficiency eta1 mean ~0.3; thrust angle off the
+      beam axis centred near 45 deg.
+    """
+
+    cm: float = 50e-6  # N*s/J (= 50 N/MW), peak at phi_opt for "plasma"; flat for "constant"
+    threshold_fluence: float = 4.5e3  # J/m^2, fire only above this
+    phi_opt: float = 8.5e3  # J/m^2, Cm peak
+    # "plasma": log ramp threshold -> phi_opt, then Cm = cm * (phi_opt/phi)^plasma_exponent
     cm_model: str = "plasma"  # "plasma" | "constant"
-    phi_opt_factor: float = 3.0  # PLACEHOLDER: phi_opt = factor * threshold (research item 2)
     plasma_exponent: float = 0.25
-    # PLACEHOLDER stochastic models for shape/tumble effects:
-    eta1_range: tuple[float, float] = (0.3, 1.0)  # uniform
-    off_axis_sigma_rad: float = np.deg2rad(20.0)  # half-normal deflection of dv from LOS
+    # eta1 ~ Beta(mean*kappa, (1-mean)*kappa); kappa is a PLACEHOLDER (spread not sourced).
+    eta1_mean: float = 0.3
+    eta1_kappa: float = 10.0
+    # Thrust deflection from beam axis ~ N(mean, sigma) clipped to [0, 90 deg], random azimuth.
+    off_axis_mean_rad: float = np.deg2rad(45.0)
+    off_axis_sigma_rad: float = np.deg2rad(15.0)  # PLACEHOLDER spread
 
     @property
     def eta1_nominal(self) -> float:
-        return 0.5 * (self.eta1_range[0] + self.eta1_range[1])
+        return self.eta1_mean
+
+    def sample_eta1(self, rng: np.random.Generator, n: int) -> np.ndarray:
+        m = self.eta1_mean
+        if m <= 0 or m >= 1 or not np.isfinite(self.eta1_kappa):
+            return np.full(n, m)
+        return rng.beta(m * self.eta1_kappa, (1 - m) * self.eta1_kappa, size=n)
+
+    def sample_off_axis(self, rng: np.random.Generator, n: int) -> np.ndarray:
+        return np.clip(rng.normal(self.off_axis_mean_rad, self.off_axis_sigma_rad, n), 0.0, np.pi / 2)
 
 
 def coupling_coefficient(phi, params: AblationParams) -> np.ndarray:
@@ -43,7 +63,9 @@ def coupling_coefficient(phi, params: AblationParams) -> np.ndarray:
         return np.where(above, params.cm, 0.0)
     if params.cm_model != "plasma":
         raise ValueError(f"unknown cm_model {params.cm_model!r}")
-    opt = params.phi_opt_factor * th
+    opt = params.phi_opt
+    if opt <= th:
+        raise ValueError("phi_opt must exceed threshold_fluence")
     safe = np.where(above, phi, th)
     rise = params.cm * np.log(safe / th) / np.log(opt / th)
     fall = params.cm * (opt / safe) ** params.plasma_exponent
@@ -106,8 +128,8 @@ def integrate_burst(
 ) -> BurstResult:
     """Integrate one burst given states (P, 3) sampled at each pulse time.
 
-    With ``rng=None`` the result is deterministic (eta1 nominal, no deflection,
-    no jitter). With an rng, eta1, off-axis deflection and pointing jitter
+    With ``rng=None`` the result is the deterministic expectation (eta1 mean,
+    cos(mean off-axis angle) along the LOS, no jitter). With an rng, eta1, off-axis deflection and pointing jitter
     are sampled per pulse.
     """
     d = r_deb - r_sat
@@ -117,8 +139,9 @@ def integrate_burst(
     P = len(R)
 
     if rng is None:
+        # Expected value: random-azimuth deflection averages out, leaving cos(mean angle) along LOS.
         eta1 = np.full(P, params.eta1_nominal)
-        dirs = u
+        dirs = u * np.cos(params.off_axis_mean_rad)
     else:
         if jitter_rad > 0:
             # Radial pointing offset (Rayleigh for 2-axis Gaussian jitter) on a
@@ -126,8 +149,8 @@ def integrate_burst(
             offset = R * jitter_rad * rng.rayleigh(size=P)
             w = spot_diameter(R, laser) / 2.0
             phi = phi * np.exp(-2.0 * (offset / w) ** 2)
-        eta1 = rng.uniform(*params.eta1_range, size=P)
-        dirs = _deflect(u, np.abs(rng.normal(0.0, params.off_axis_sigma_rad, size=P)), rng)
+        eta1 = params.sample_eta1(rng, P)
+        dirs = _deflect(u, params.sample_off_axis(rng, P), rng)
 
     fire = phi >= params.threshold_fluence
     cm = coupling_coefficient(phi, params)

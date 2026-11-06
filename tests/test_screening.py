@@ -114,8 +114,8 @@ def test_screen_toy_population_runs(rng):
     assert all(0 <= w.debris_index < len(pop) for w in windows)
 
 
-@pytest.mark.skip(reason="Gate 3: needs L'ADROIT head-on geometry (miss distance); "
-                  "w = v_rel*b/r^2 implies b ~ 9 km for 2 deg/s at 63 km with v_rel ~ 15 km/s")
+@pytest.mark.skip(reason="Gate 3: 63 km confirmed in Pieters & Noomen (SDC8 paper 43) but the miss "
+                  "distance is unstated; w = v_rel*b/r^2 implies b ~ 9 km at v_rel ~ 15 km/s")
 def test_gate3_slew_limit_head_on():
     pass
 
@@ -141,3 +141,13 @@ def test_coarse_sieve_prunes_most_objects():
     sat = baseline_platform(800.0)
     keep = coarse_sieve(sat.orbit, pop.elements, pop.ballistic_coeff, np.arange(0.0, 600.0), 500e3, 30.0)
     assert keep.mean() < 0.2
+
+
+def test_gate4_encounter_rate_consistent_with_phipps():
+    """Phipps: ~19/min within 250 km at ~100k objects. Not a validation: we count
+    full-sphere entries at our own relative speeds, so agree only to ~2x."""
+    from talos.metrics import raw_encounter_rate
+
+    pop = toy_population(20000, np.random.default_rng(0), n_real=1.0e5)
+    rate = raw_encounter_rate(baseline_platform(800.0), pop, np.arange(0.0, 1800.0), 250e3)
+    assert 19.0 / 2.5 < rate < 19.0 * 2.5
