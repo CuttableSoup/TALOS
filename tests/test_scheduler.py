@@ -91,3 +91,10 @@ def test_evaluate_candidates_respects_min_burst_and_settle():
         assert sat.resources.min_burst_s - 1e-9 <= c.t_stop - c.t_start <= sat.resources.burst_s + 1e-9
         assert c.dv_retrograde > 0 and c.dv_required > 0
     assert evaluate_candidates(sat, pop, open_w, t, k, AblationParams(), max_fire_s=1.0) == []
+
+
+def test_closest_to_removal_concentrates():
+    fresh_light = cand(0, dv=60.0, need=150.0)   # 90 left
+    lowered = cand(1, dv=10.0, need=60.0)        # 50 left
+    assert pick([fresh_light, lowered], "closest_to_removal").debris_index == 1
+    assert pick([fresh_light, lowered], "removal_progress").debris_index == 0

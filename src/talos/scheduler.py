@@ -9,6 +9,7 @@ Scores:
     dv-to-removal this burst delivers, capped at 1. Favours light objects and
     objects already partly lowered, so repeat engagements concentrate dv
     instead of spreading it thin.
+  * ``closest_to_removal``: smallest dv still needed after the burst.
   * ``dv_per_energy``: retrograde dv per joule fired (the original greedy rule).
 
 TODO: OR-Tools CP-SAT or Pyomo+HiGHS receding-horizon ILP; cross-platform
@@ -63,8 +64,15 @@ def score_removal_progress(c: Candidate) -> float:
     return frac + 1e-6 * c.dv_retrograde  # tie-break on dv among completions
 
 
+def score_closest_to_removal(c: Candidate) -> float:
+    """Minimise dv still needed after this burst: strongly concentrates on
+    objects already partly lowered (and on low, light ones)."""
+    return -(c.dv_required - c.dv_retrograde)
+
+
 SCORES: dict[str, Callable[[Candidate], float]] = {
     "removal_progress": score_removal_progress,
+    "closest_to_removal": score_closest_to_removal,
     "dv_per_energy": score_dv_per_energy,
 }
 
