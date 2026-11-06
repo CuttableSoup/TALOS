@@ -165,3 +165,45 @@ def integrate_burst(
         n_pulses=P,
         optical_energy_j=n_fired * laser.pulse_energy_j,
     )
+
+
+@dataclass(frozen=True)
+class BurstPrediction:
+    """Deterministic (expected-value) predictions for n candidate bursts."""
+
+    dv_vec: np.ndarray  # (n, 3)
+    dv_retrograde: np.ndarray  # (n,)
+    n_fired: np.ndarray  # (n,)
+    optical_energy_j: np.ndarray  # (n,)
+
+
+def predict_bursts(
+    r_sat: np.ndarray,
+    r_deb: np.ndarray,
+    v_deb: np.ndarray,
+    active: np.ndarray,
+    laser: LaserConfig,
+    areal_density: np.ndarray,
+    params: AblationParams = AblationParams(),
+) -> BurstPrediction:
+    """Batched deterministic version of ``integrate_burst``.
+
+    r_sat: (P, 3); r_deb, v_deb: (P, n, 3); active: (P, n) pulses inside each
+    candidate's burst; areal_density: (n,). Matches ``integrate_burst(rng=None)``.
+    """
+    d = r_deb - r_sat[:, None, :]
+    R = np.linalg.norm(d, axis=-1)
+    phi = fluence(R, laser)
+    fire = active & (phi >= params.threshold_fluence)
+    cm = coupling_coefficient(phi, params)
+    mag = np.where(fire, params.eta1_nominal * cm * phi / np.asarray(areal_density)[None, :], 0.0)
+    mag = mag * np.cos(params.off_axis_mean_rad) / R  # fold LOS normalisation into the magnitude
+    dv_i = mag[..., None] * d
+    v_hat = v_deb / np.linalg.norm(v_deb, axis=-1, keepdims=True)
+    n_fired = fire.sum(axis=0)
+    return BurstPrediction(
+        dv_vec=dv_i.sum(axis=0),
+        dv_retrograde=-np.sum(dv_i * v_hat, axis=(0, 2)),
+        n_fired=n_fired,
+        optical_energy_j=n_fired * laser.pulse_energy_j,
+    )

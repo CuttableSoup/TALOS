@@ -1,10 +1,18 @@
-"""Module 6 — engagement scheduler (greedy).
+"""Module 6 — engagement scheduler.
 
-At each moment a platform is ready to fire, evaluate every open window with a
-deterministic burst prediction and pick the target with the best score
-(default: retrograde dv per unit optical energy fired, the README's greedy rule).
+When a platform is ready to fire, every open window gets a deterministic
+(expected-value) burst prediction, evaluated for all candidates in one batched
+call, and the best-scoring target is chosen.
 
-TODO: OR-Tools CP-SAT or Pyomo+HiGHS receding-horizon ILP.
+Scores:
+  * ``removal_progress`` (default): fraction of the object's remaining
+    dv-to-removal this burst delivers, capped at 1. Favours light objects and
+    objects already partly lowered, so repeat engagements concentrate dv
+    instead of spreading it thin.
+  * ``dv_per_energy``: retrograde dv per joule fired (the original greedy rule).
+
+TODO: OR-Tools CP-SAT or Pyomo+HiGHS receding-horizon ILP; cross-platform
+handoff of partly lowered objects.
 """
 
 from __future__ import annotations
@@ -14,8 +22,10 @@ from typing import Callable
 
 import numpy as np
 
+from .constants import MU_EARTH, R_EARTH
 from .debris import DebrisPopulation
-from .engagement import AblationParams, BurstResult, integrate_burst, pulse_times
+from .engagement import AblationParams, predict_bursts, pulse_times
+from .lifetime import REMOVAL_PERIGEE_ALT_M
 from .platform import Platform
 from .propagator import states_at
 from .screening import Window
@@ -26,11 +36,37 @@ class Candidate:
     debris_index: int
     t_start: float
     t_stop: float  # end of burst (burst length or window end, whichever first)
-    predicted: BurstResult
+    dv_retrograde: float  # predicted
+    n_fired: int
+    optical_energy_j: float
+    dv_required: float  # dv still needed to reach the removal perigee
+
+
+def dv_to_remove(a, e, target_perigee_alt_m: float = REMOVAL_PERIGEE_ALT_M) -> np.ndarray:
+    """Ideal retrograde dv [m/s], applied at apogee, to lower perigee to the removal altitude."""
+    a = np.asarray(a, float)
+    e = np.asarray(e, float)
+    ra = a * (1 + e)
+    rp_t = R_EARTH + target_perigee_alt_m
+    v_a = np.sqrt(MU_EARTH * (2 / ra - 1 / a))
+    a2 = 0.5 * (ra + rp_t)
+    v_a2 = np.sqrt(MU_EARTH * (2 / ra - 1 / a2))
+    return np.where(a * (1 - e) <= rp_t, 0.0, v_a - v_a2)
 
 
 def score_dv_per_energy(c: Candidate) -> float:
-    return c.predicted.dv_retrograde / c.predicted.optical_energy_j
+    return c.dv_retrograde / c.optical_energy_j
+
+
+def score_removal_progress(c: Candidate) -> float:
+    frac = 1.0 if c.dv_required <= 0 else min(c.dv_retrograde / c.dv_required, 1.0)
+    return frac + 1e-6 * c.dv_retrograde  # tie-break on dv among completions
+
+
+SCORES: dict[str, Callable[[Candidate], float]] = {
+    "removal_progress": score_removal_progress,
+    "dv_per_energy": score_dv_per_energy,
+}
 
 
 def burst_states(platform: Platform, population: DebrisPopulation, j: int, tp: np.ndarray):
@@ -61,22 +97,38 @@ def evaluate_candidates(
     las, res = platform.laser, platform.resources
     dt = t_grid[1] - t_grid[0] if len(t_grid) > 1 else 1.0
     f_max = res.burst_s if max_fire_s is None else min(res.burst_s, max_fire_s)
+    if f_max < res.min_burst_s - 1e-9 or not open_windows:
+        return []
     min_fired = max(1, int(min_fired_frac * res.min_burst_s * las.prf_hz))
     t0 = t_grid[k] + platform.atp.settle_s
-    out = []
-    for w in open_windows:
-        t_end = np.inf if w.stop >= len(t_grid) else t_grid[w.stop - 1] + dt
-        t1 = min(t0 + f_max, t_end)
-        if t1 - t0 < res.min_burst_s - 1e-9:
-            continue
-        tp = pulse_times(t0, t1 - t0, las.prf_hz)
-        j = w.debris_index
-        pred = integrate_burst(*burst_states(platform, population, j, tp), las,
-                               population.areal_density[j], params)
-        if pred.n_fired >= min_fired and pred.dv_retrograde > 0:
-            out.append(Candidate(j, t0, t1, pred))
-    return out
+
+    js = np.array([w.debris_index for w in open_windows])
+    t_end = np.array([np.inf if w.stop >= len(t_grid) else t_grid[w.stop - 1] + dt for w in open_windows])
+    t1 = np.minimum(t0 + f_max, t_end)
+    ok = t1 - t0 >= res.min_burst_s - 1e-9
+    if not ok.any():
+        return []
+    js, t1 = js[ok], t1[ok]
+
+    tp = pulse_times(t0, f_max, las.prf_hz)
+    active = tp[:, None] < t1[None, :] - 1e-9
+    r_s, _ = states_at(platform.orbit, tp)
+    sub = population.elements[js]
+    r_d, v_d = states_at(sub, tp, population.ballistic_coeff[js])
+    pred = predict_bursts(r_s, r_d, v_d, active, las, population.areal_density[js], params)
+    need = dv_to_remove(sub.a, sub.e)
+
+    keep = (pred.n_fired >= min_fired) & (pred.dv_retrograde > 0)
+    return [
+        Candidate(int(js[i]), float(t0), float(t1[i]), float(pred.dv_retrograde[i]),
+                  int(pred.n_fired[i]), float(pred.optical_energy_j[i]), float(need[i]))
+        for i in np.flatnonzero(keep)
+    ]
 
 
-def pick(candidates: list[Candidate], score: Callable[[Candidate], float] = score_dv_per_energy) -> Candidate | None:
-    return max(candidates, key=score) if candidates else None
+def pick(
+    candidates: list[Candidate],
+    score: str | Callable[[Candidate], float] = "removal_progress",
+) -> Candidate | None:
+    fn = SCORES[score] if isinstance(score, str) else score
+    return max(candidates, key=fn) if candidates else None

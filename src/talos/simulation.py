@@ -109,6 +109,7 @@ def run_engagements(
     params: AblationParams = AblationParams(),
     rng: np.random.Generator | None = None,
     batch: int = 1000,
+    score: str = "removal_progress",
 ) -> SimResult:
     pop = copy.deepcopy(population)
     removed = np.zeros(len(pop), dtype=bool)
@@ -136,7 +137,7 @@ def run_engagements(
                     continue
                 rs = state[plat.name]
                 rs.advance(max(rs.t, t[k] + plat.atp.settle_s))
-                best = pick(evaluate_candidates(plat, pop, open_w, t, k, params, max_fire_s=rs.max_fire_s()))
+                best = pick(evaluate_candidates(plat, pop, open_w, t, k, params, max_fire_s=rs.max_fire_s()), score)
                 if best is None:
                     k += 1
                     continue
