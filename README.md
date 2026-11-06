@@ -60,7 +60,7 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
    lifetimes vs DRAMA/OSCAR, NASA DAS, CNES STELA
 
 ## Stack
-- Prototype: Python 3.10+, numpy, python-sgp4, pymsis, joblib, pandas, parquet
+- Prototype: Python 3.10+, numpy, numba (optional), python-sgp4, pymsis, pandas, pyarrow
 - Validation: heyoka.py, ESA cascade, orekit-jpype, Basilisk (power check),
   OR-Tools/Pyomo
 - Avoid: poliastro (archived 2023); GPL libs (dSGP4, NASA-breakup-model-cpp)
@@ -74,11 +74,25 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 - Consider contacting WVU (Hang Woon Lee lab) re: code
 
 ## Status
-- Done (prototype): modules 2, 3, 4, 5, 6 (greedy), 7, end-to-end loop
-  (`talos.simulation.run_engagements`), toy population, raw encounter rate.
-- Run: `pip install -e .[dev]` then `pytest`; demo: `python scripts/demo_run.py N SATS HOURS MU`
+- Done (prototype): modules 2–9 — propagator, platform/ATP, screening (coarse
+  sieve + fine gates), engagement physics, scheduler (removal-progress scoring,
+  batched prediction), lifetime/removal, power/thermal state machine, metrics,
+  parallel sweep driver. Population is still a toy sampler (module 1 pending MASTER).
+- Run: `pip install -e .[dev]` (+ `numba`, `pyarrow` for speed/parquet), then `pytest`.
+  Demo: `python scripts/demo_run.py N SATS HOURS MU`; scheduler comparison:
+  `python scripts/compare_scores.py DAYS`; sweeps: `talos.sweep.run_sweep(readme_matrix(), "runs/x")`.
 - Engagement/removal counts are NOT weight-scaled (one target per burst);
-  they're valid only when `saturation`≈1 and converged in N.
+  run at full density (N = n_real).
+
+## Performance
+- Numba `prange` kernels fuse propagation + Kepler + gates (`talos/_kernels.py`);
+  numpy fallback with `TALOS_NUMBA=0`. 4 sats × 1 h × 100k objects: 16.5 s → 2.1 s.
+- Sweeps fan out over processes (`n_jobs × threads_per_job = cpu_count`).
+- GPU not used: the dev box has an AMD RX 6950 XT on Windows — no CUDA, no
+  CuPy-ROCm on Windows, DirectML lacks usable float64. The CPU path is now
+  dominated by Python-level scheduling rather than array math, so a GPU would
+  not help much without restructuring. Revisit (pyopencl / ROCm on Linux) if
+  1M-object runs become the norm.
 
 ## Placeholders (replace with sourced values — see research prompt)
 | Parameter | Where | Value | Basis |
