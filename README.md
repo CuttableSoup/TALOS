@@ -122,12 +122,23 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
   attributed to full-sphere cross-section and relative-speed differences
 - Subsampling invalid for a target-saturated greedy platform: run at full
   density (N = n_real). At 100k that's ~15 s per 2 sat-hours.
-- Single-engagement Δv at baseline (μ=1, 50 N/MW, η₂=0.4) is ~12 m/s vs
-  ~100–150 m/s needed: removal needs ~10+ engagements per object, so removals/yr
-  hinge on whether the scheduler concentrates on objects; greedy spreads Δv thin
+- Single-engagement Δv at baseline (μ=1, 50 N/MW, η₂=0.4) is ~10 m/s vs
+  ~164 m/s needed from 800 km: μ=1 removal takes ~15–25 engagements, so it is
+  revisit-limited. 30-day, 4-sat, 100k toy pop, μ=1 (runs/compare_30d):
+  | score | removed (30 d) | debris-yr removed/yr | max hits/object |
+  |---|---|---|---|
+  | removal_progress (default) | 942 | 482k | 29 |
+  | closest_to_removal | 982 | 272k | 69 |
+  | dv_per_energy | 635 | 579k | 19 |
+  Removal-aware scoring gives ~50% more removals; removal_progress keeps most of
+  the debris-years benefit, so it stays the default.
+- Removal rate is still climbing at day 30 (weekly removals 41→127→285→~380 for
+  removal_progress): the README's "7–30 sim days, extrapolate to 1 yr" plan
+  under-counts. Need longer runs or a steady-state detector. A 30-day 4-sat run
+  takes ~30 min (3 runs in parallel, 10 threads each).
 - `debris_years_removed` is dominated by small Δv on very long-lived (μ=10)
   objects and depends on the 200-yr cap
 
 ## Next step
-Removal-aware scheduler scoring (progress toward removal, revisit partially
-lowered objects), then multi-day full-density runs; MASTER population (module 1).
+Receding-horizon scheduler that reserves bursts for upcoming passes of partly
+lowered objects; longer runs / steady-state detection; MASTER population (module 1).
