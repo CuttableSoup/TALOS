@@ -84,9 +84,15 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 - Constant Cm overstates Δv at fluence ≫ threshold; need Cm(φ)
 - Gate 4: geometry gives ~500/min within 325 km for 1M objects uniform in
   600–1000 km (hand check ~780/min) vs ~25/min target — reconcile definition/density
-- Metrics not converged at N=10k (mean Δv/engagement 8→25 m/s from 2k→10k);
-  need coarse window prediction for speed (~33 s per sat-2h at 10k)
-- Module 8 placeholder: cooldown ∝ fire time
+- Subsampling (README's "5k–50k samples, scale linearly") does not work for a
+  target-saturated greedy platform: results depend on sample density because the
+  scheduler picks the best of what's in view. Toy pop, 1 sat-hour:
+  N=10k→100k→300k→1M gives mean Δv/eng 25→66→71→106 m/s, removals 4→22→31→34.
+  Full density (N=n0) costs ~2 min per sat-hour after the coarse sieve.
+- Removals look implausibly high (~34/hr/sat at 1M, toy pop) — driven by η₂=1,
+  constant Cm at φ≫threshold, μ=1 everywhere, and no retarget/settle time
+- Module 8 placeholder: cooldown ∝ fire time, so short truncated bursts
+  (mean ~5.5 s) let engagements/hr exceed the 3600/(10+120)≈28 cap
 
 ## Next step
-Coarse time-window prediction in screening, Cm(φ) model, MASTER population (module 1), module 8.
+Cm(φ) model, retarget/settle time, η₂ calibration, density strategy (full-density vs encounter-flux sampling), MASTER population (module 1), module 8.
