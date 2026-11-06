@@ -72,5 +72,21 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 - Request NASA DAS/ORDEM via software usage agreement (slow)
 - Consider contacting WVU (Hang Woon Lee lab) re: code
 
+## Status
+- Done (prototype): modules 2, 3, 4, 5, 6 (greedy), 7, end-to-end loop
+  (`talos.simulation.run_engagements`), toy population, raw encounter rate.
+- Run: `pip install -e .[dev]` then `pytest`; demo: `python scripts/demo_run.py N SATS HOURS MU`
+- Engagement/removal counts are NOT weight-scaled (one target per burst);
+  they're valid only when `saturation`≈1 and converged in N.
+
+## Open issues
+- η₂ uncalibrated (default 1.0 → ~560 km threshold range at 25 kW; L'ADROIT 175–325 km)
+- Constant Cm overstates Δv at fluence ≫ threshold; need Cm(φ)
+- Gate 4: geometry gives ~500/min within 325 km for 1M objects uniform in
+  600–1000 km (hand check ~780/min) vs ~25/min target — reconcile definition/density
+- Metrics not converged at N=10k (mean Δv/engagement 8→25 m/s from 2k→10k);
+  need coarse window prediction for speed (~33 s per sat-2h at 10k)
+- Module 8 placeholder: cooldown ∝ fire time
+
 ## Next step
-Write code skeleton: package layout, dataclasses for platform and debris, stubbed modules 2, 4, 5 with unit tests.
+Coarse time-window prediction in screening, Cm(φ) model, MASTER population (module 1), module 8.

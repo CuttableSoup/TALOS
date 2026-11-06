@@ -110,6 +110,32 @@ def find_windows(mask: np.ndarray, min_steps: int = 1) -> list[Window]:
     ]
 
 
+def screen_windows(
+    platform: Platform,
+    population: DebrisPopulation,
+    t: np.ndarray,
+    candidates: np.ndarray | None = None,
+    min_steps: int = 1,
+    batch: int = 1000,
+) -> list[Window]:
+    """Memory-bounded screening: windows only, objects processed in batches.
+
+    ``candidates`` optionally restricts to these population indices (e.g. not yet removed).
+    Window ``debris_index`` refers to the original population index.
+    """
+    idx = np.arange(len(population)) if candidates is None else np.asarray(candidates)
+    idx = idx[apsis_filter(platform.orbit, population.elements[idx], platform.atp.engage_range_max_m)]
+    r_s, v_s = states_at(platform.orbit, t)
+    out: list[Window] = []
+    for k in range(0, len(idx), batch):
+        cols = idx[k : k + batch]
+        sub = population.subset(cols)
+        r_d, v_d = states_at(sub.elements, t, sub.ballistic_coeff)
+        mask = screen_fine(t, r_s, v_s, r_d, v_d, platform.atp).mask
+        out += [Window(int(cols[w.debris_index]), w.start, w.stop) for w in find_windows(mask, min_steps)]
+    return out
+
+
 def screen(
     platform: Platform,
     population: DebrisPopulation,
