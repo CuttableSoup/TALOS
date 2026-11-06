@@ -24,9 +24,10 @@ class LaserConfig:
     beam_a: float = 1.27  # diffraction constant "a" in the fluence equation
     prf_hz: float = 33.0
     burst_power_w: float = 25e3  # optical power while firing
-    # PLACEHOLDER: optical-train transmission x Strehl. 1.0 is an upper bound;
-    # calibrating this against L'ADROIT ranges is validation gate 1.
-    eta2: float = 1.0
+    # PLACEHOLDER: optical-train transmission x Strehl. 0.35 is back-solved so the
+    # baseline threshold range is ~325 km (L'ADROIT upper bound) -- replace with
+    # a sourced value (research item 1); gate 1 is not independently checked yet.
+    eta2: float = 0.35
 
     @property
     def pulse_energy_j(self) -> float:
@@ -45,6 +46,9 @@ class ATPConfig:
     field_of_regard_half_angle_rad: float = np.pi
     earth_clearance_alt_m: float = 100e3  # LOS must stay above this altitude
     jitter_rad: float = 0.3e-6  # 1-sigma per-axis pointing jitter
+    # PLACEHOLDER: retarget + settle + acquisition before each burst. Conservative:
+    # counted after target selection, not overlapped with recovery.
+    settle_s: float = 5.0
 
 
 @dataclass(frozen=True)
@@ -56,10 +60,12 @@ class ResourceConfig:
     wallplug_eff: float = 0.15
     radiator_area_m2: float = 20.0  # PLACEHOLDER
     radiator_net_flux_w_m2: float = 600.0
+    # PLACEHOLDER: storable waste heat (PCM / thermal mass). ~1 full burst of net heat.
+    heat_buffer_j: float = 1.5e6
     battery_capacity_j: float = 2.0 * 3.6e6  # PLACEHOLDER (2 kWh)
     bus_power_w: float = 1.5e3  # PLACEHOLDER
-    burst_s: float = 10.0
-    cooldown_s: float = 120.0
+    burst_s: float = 10.0  # max burst; platform waits until a full burst fits
+    min_burst_s: float = 5.0  # PLACEHOLDER: shortest burst worth starting
 
 
 @dataclass(frozen=True)

@@ -1,8 +1,9 @@
 """End-to-end engagement loop: screen -> greedy pick -> burst -> dv -> removal check.
 
-Resource gating is a crude placeholder until module 8: after firing for
-``f`` seconds a platform cools down for ``f * cooldown_s / burst_s`` seconds,
-so duty cycle <= burst_s / (burst_s + cooldown_s) and comes out of the run.
+Resource gating is the module-8 battery + heat-buffer state machine: a
+platform becomes ready when a full ``burst_s`` burst fits, then selects a target,
+settles for ``atp.settle_s`` and fires for up to the resource-allowed duration.
+Duty cycle is an output.
 
 Simplifications (documented, to revisit):
   * Time is processed in chunks; each object is engaged at most once per chunk
@@ -23,6 +24,7 @@ from .debris import DebrisPopulation
 from .engagement import AblationParams, integrate_burst, pulse_times
 from .lifetime import apply_dv, is_removed, move_epoch
 from .platform import Platform
+from .resources import ResourceState
 from .scheduler import burst_states, evaluate_candidates, pick
 from .screening import screen_windows
 
@@ -50,7 +52,7 @@ class SimResult:
     platforms: list[str]
     fire_time_s: dict[str, float]
     removed: np.ndarray  # bool per population sample
-    max_duty: float  # burst/(burst+cooldown), mean over platforms
+    max_duty: float  # steady-state duty ceiling from power/thermal, mean over platforms
     population: DebrisPopulation = field(repr=False)
 
     def records(self) -> list[dict]:
@@ -97,6 +99,7 @@ def run_engagements(
     pop = copy.deepcopy(population)
     removed = np.zeros(len(pop), dtype=bool)
     ready_at = {p.name: 0.0 for p in platforms}
+    state = {p.name: ResourceState(p.resources, p.laser) for p in platforms}
     fire_time = {p.name: 0.0 for p in platforms}
     events: list[EngagementEvent] = []
 
@@ -117,7 +120,9 @@ def run_engagements(
                         break
                     k = min(later)
                     continue
-                best = pick(evaluate_candidates(plat, pop, open_w, t, k, params))
+                rs = state[plat.name]
+                rs.advance(max(rs.t, t[k] + plat.atp.settle_s))
+                best = pick(evaluate_candidates(plat, pop, open_w, t, k, params, max_fire_s=rs.max_fire_s()))
                 if best is None:
                     k += 1
                     continue
@@ -138,7 +143,8 @@ def run_engagements(
 
                 fire = best.t_stop - best.t_start
                 fire_time[plat.name] += fire
-                ready_at[plat.name] = best.t_stop + fire * plat.resources.cooldown_s / plat.resources.burst_s
+                rs.fire(fire)
+                ready_at[plat.name] = rs.t + rs.wait_for(plat.resources.burst_s)
                 events.append(EngagementEvent(
                     platform=plat.name, debris_index=j, t_start=best.t_start, t_stop=best.t_stop,
                     n_pulses=res.n_pulses, n_fired=res.n_fired, dv_retrograde=res.dv_retrograde,
@@ -148,5 +154,5 @@ def run_engagements(
                 ))
                 k = int(np.searchsorted(t, ready_at[plat.name]))
 
-    max_duty = float(np.mean([p.resources.burst_s / (p.resources.burst_s + p.resources.cooldown_s) for p in platforms]))
+    max_duty = float(np.mean([s.steady_state_max_duty() for s in state.values()]))
     return SimResult(events, duration_s, [p.name for p in platforms], fire_time, removed, max_duty, pop)

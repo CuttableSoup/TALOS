@@ -79,9 +79,25 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 - Engagement/removal counts are NOT weight-scaled (one target per burst);
   they're valid only when `saturation`≈1 and converged in N.
 
+## Placeholders (replace with sourced values — see research prompt)
+| Parameter | Where | Value | Basis |
+|---|---|---|---|
+| η₂ (transmission × Strehl) | `LaserConfig.eta2` | 0.35 | back-solved: threshold range ≈ 325 km |
+| Cm model | `AblationParams.cm_model` | plasma | log ramp to φ_opt, then ∝ φ^-1/4 (Phipps) |
+| Cm peak | `AblationParams.cm` | 30 µN·s/J | README conservative end |
+| φ_opt | `AblationParams.phi_opt_factor` | 3 × threshold | guess |
+| η₁ | `AblationParams.eta1_range` | U(0.3, 1.0) | guess |
+| Δv off-axis angle | `AblationParams.off_axis_sigma_rad` | half-normal σ=20° | guess |
+| Settle / retarget | `ATPConfig.settle_s` | 5 s, not overlapped | guess (conservative) |
+| Min burst | `ResourceConfig.min_burst_s` | 5 s | guess |
+| Heat buffer | `ResourceConfig.heat_buffer_j` | 1.5 MJ | ≈ one 10 s burst of net heat |
+| Radiator area | `ResourceConfig.radiator_area_m2` | 20 m² | gives ~118 s recovery ≈ README's 120 s |
+| Battery / bus | `ResourceConfig` | 2 kWh / 1.5 kW | guess |
+| Field of regard | `ATPConfig.field_of_regard_half_angle_rad` | unrestricted | guess |
+| Sunlight | `resources.py` | always sunlit | dawn-dusk SSO, eclipse season ignored |
+
 ## Open issues
-- η₂ uncalibrated (default 1.0 → ~560 km threshold range at 25 kW; L'ADROIT 175–325 km)
-- Constant Cm overstates Δv at fluence ≫ threshold; need Cm(φ)
+- η₂ is back-solved to L'ADROIT's 325 km, so gate 1 is not an independent check yet
 - Gate 4: geometry gives ~500/min within 325 km for 1M objects uniform in
   600–1000 km (hand check ~780/min) vs ~25/min target — reconcile definition/density
 - Subsampling (README's "5k–50k samples, scale linearly") does not work for a
@@ -91,8 +107,6 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
   Full density (N=n0) costs ~2 min per sat-hour after the coarse sieve.
 - Removals look implausibly high (~34/hr/sat at 1M, toy pop) — driven by η₂=1,
   constant Cm at φ≫threshold, μ=1 everywhere, and no retarget/settle time
-- Module 8 placeholder: cooldown ∝ fire time, so short truncated bursts
-  (mean ~5.5 s) let engagements/hr exceed the 3600/(10+120)≈28 cap
 
 ## Next step
 Cm(φ) model, retarget/settle time, η₂ calibration, density strategy (full-density vs encounter-flux sampling), MASTER population (module 1), module 8.

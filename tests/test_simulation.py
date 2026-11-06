@@ -22,6 +22,7 @@ def test_trailing_object_is_engaged_and_lowered():
     sat = baseline_platform(800.0)
     pop = coorbital_pop(sat, [-1.5, 1.5])  # ~190 km behind / ahead
     res = run_engagements([sat], pop, duration_s=600.0, params=AblationParams(eta1_range=(1, 1)))
+    assert all(e.t_stop - e.t_start >= sat.resources.min_burst_s - 1e-9 for e in res.events)
     targets = {e.debris_index for e in res.events}
     assert targets == {0}  # pushing the leading object would be prograde
     ev = res.events[0]
@@ -37,8 +38,8 @@ def test_repeated_engagement_removes_light_object_and_duty_cycle_bounded():
     res = run_engagements([sat], pop, duration_s=6 * 3600.0, chunk_s=300.0)
     assert res.removed[0]
     s = res.summary()
-    r = sat.resources
-    assert 0 < s["duty_cycle_mean"] <= r.burst_s / (r.burst_s + r.cooldown_s) + 1e-9
+    # initial empty heat buffer allows a little over the steady-state ceiling
+    assert 0 < s["duty_cycle_mean"] <= 1.05 * res.max_duty
     assert s["removed"] == 1
 
 
@@ -59,3 +60,15 @@ def test_raw_encounter_rate_counts_entries():
 
 def test_required_removal_rate():
     assert required_removal_rate(1e6, 10.0) == pytest.approx(1e6 * np.log(10) / 10)
+
+
+def test_engagement_rate_respects_thermal_ceiling():
+    sat = baseline_platform(800.0)
+    pop = toy_population(20000, np.random.default_rng(5))
+    res = run_engagements([sat], pop, 3 * 3600.0)
+    s = res.summary()
+    r, atp = sat.resources, sat.atp
+    # each full burst needs ~burst_s/max_duty of wall time; shorter bursts are >= min_burst_s
+    cap_per_hr = 3600.0 / (r.min_burst_s / res.max_duty)
+    assert s["useful_engagements_per_hr_per_sat"] <= cap_per_hr
+    assert s["duty_cycle_mean"] <= 1.05 * res.max_duty

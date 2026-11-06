@@ -3,6 +3,7 @@ import pytest
 
 from talos.engagement import (
     AblationParams,
+    coupling_coefficient,
     dv_per_pulse,
     fluence,
     integrate_burst,
@@ -62,7 +63,7 @@ def head_on_geometry(R, n=33):
 
 
 def test_head_on_burst_is_fully_retrograde():
-    params = AblationParams(eta1_range=(1.0, 1.0))
+    params = AblationParams(eta1_range=(1.0, 1.0), cm_model="constant")
     r_s, r_d, v_d = head_on_geometry(200e3)
     res = integrate_burst(r_s, r_d, v_d, LASER, areal_density=1.0, params=params)
     expected = 33 * params.cm * fluence(200e3, LASER) / 1.0
@@ -87,7 +88,7 @@ def test_tail_chase_is_prograde():
 
 
 def test_stochastic_burst_bounded_and_reproducible():
-    params = AblationParams()
+    params = AblationParams(cm_model="constant")
     geom = head_on_geometry(200e3, n=330)
     a = integrate_burst(*geom, LASER, 1.0, params, jitter_rad=0.3e-6, rng=np.random.default_rng(7))
     b = integrate_burst(*geom, LASER, 1.0, params, jitter_rad=0.3e-6, rng=np.random.default_rng(7))
@@ -101,3 +102,28 @@ def test_pulse_times():
     t = pulse_times(100.0, 10.0, 33.0)
     assert len(t) == 330
     assert t[1] - t[0] == pytest.approx(1 / 33)
+
+
+def test_plasma_cm_shape():
+    p = AblationParams()
+    th, opt = p.threshold_fluence, p.phi_opt_factor * p.threshold_fluence
+    cm = lambda x: float(coupling_coefficient(x, p))
+    assert cm(0.99 * th) == 0.0
+    assert cm(th) == pytest.approx(0.0, abs=1e-12)
+    assert cm(opt) == pytest.approx(p.cm)
+    assert cm(0.5 * (th + opt)) < p.cm
+    assert cm(16 * opt) == pytest.approx(p.cm / 2)  # (1/16)^(1/4)
+    # dv per pulse ~ Cm * phi keeps growing above opt, but sub-linearly (phi^3/4)
+    assert cm(4 * opt) * 4 * opt / (cm(opt) * opt) == pytest.approx(4**0.75)
+
+
+def test_plasma_burst_dv_below_constant():
+    geom = head_on_geometry(150e3)
+    const = integrate_burst(*geom, LASER, 1.0, AblationParams(cm_model="constant"))
+    plasma = integrate_burst(*geom, LASER, 1.0, AblationParams())
+    assert 0 < plasma.dv_retrograde < const.dv_retrograde
+
+
+def test_unknown_cm_model():
+    with pytest.raises(ValueError):
+        coupling_coefficient(1e5, AblationParams(cm_model="nope"))

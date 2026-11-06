@@ -18,8 +18,13 @@ from .platform import LaserConfig
 
 @dataclass(frozen=True)
 class AblationParams:
-    cm: float = 30e-6  # N*s/J (30 conservative ... 100)
+    cm: float = 30e-6  # N*s/J, peak (at phi_opt) for "plasma"; flat for "constant"
     threshold_fluence: float = 8.5e3  # J/m^2 (~0.85 J/cm^2 at 100 ps)
+    # Cm(phi) shape. "plasma": log ramp from threshold to phi_opt, then
+    # Cm ~ (phi_opt/phi)^plasma_exponent (Phipps plasma regime, Cm ~ (I lambda sqrt(tau))^-1/4).
+    cm_model: str = "plasma"  # "plasma" | "constant"
+    phi_opt_factor: float = 3.0  # PLACEHOLDER: phi_opt = factor * threshold (research item 2)
+    plasma_exponent: float = 0.25
     # PLACEHOLDER stochastic models for shape/tumble effects:
     eta1_range: tuple[float, float] = (0.3, 1.0)  # uniform
     off_axis_sigma_rad: float = np.deg2rad(20.0)  # half-normal deflection of dv from LOS
@@ -27,6 +32,22 @@ class AblationParams:
     @property
     def eta1_nominal(self) -> float:
         return 0.5 * (self.eta1_range[0] + self.eta1_range[1])
+
+
+def coupling_coefficient(phi, params: AblationParams) -> np.ndarray:
+    """Momentum coupling Cm [N*s/J] at fluence ``phi`` [J/m^2]; 0 below threshold."""
+    phi = np.asarray(phi, dtype=float)
+    th = params.threshold_fluence
+    above = phi >= th
+    if params.cm_model == "constant":
+        return np.where(above, params.cm, 0.0)
+    if params.cm_model != "plasma":
+        raise ValueError(f"unknown cm_model {params.cm_model!r}")
+    opt = params.phi_opt_factor * th
+    safe = np.where(above, phi, th)
+    rise = params.cm * np.log(safe / th) / np.log(opt / th)
+    fall = params.cm * (opt / safe) ** params.plasma_exponent
+    return np.where(above, np.where(safe <= opt, rise, fall), 0.0)
 
 
 def spot_diameter(range_m, laser: LaserConfig) -> np.ndarray:
@@ -109,7 +130,8 @@ def integrate_burst(
         dirs = _deflect(u, np.abs(rng.normal(0.0, params.off_axis_sigma_rad, size=P)), rng)
 
     fire = phi >= params.threshold_fluence
-    dv_mag = np.where(fire, dv_per_pulse(phi, areal_density, params.cm, eta1), 0.0)
+    cm = coupling_coefficient(phi, params)
+    dv_mag = np.where(fire, dv_per_pulse(phi, areal_density, cm, eta1), 0.0)
     dv_i = dv_mag[:, None] * dirs
     v_hat = v_deb / np.linalg.norm(v_deb, axis=-1, keepdims=True)
     n_fired = int(fire.sum())
