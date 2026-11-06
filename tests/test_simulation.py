@@ -72,3 +72,24 @@ def test_engagement_rate_respects_thermal_ceiling():
     cap_per_hr = 3600.0 / (r.min_burst_s / res.max_duty)
     assert s["useful_engagements_per_hr_per_sat"] <= cap_per_hr
     assert s["duty_cycle_mean"] <= 1.05 * res.max_duty
+
+
+def test_removal_credit_excludes_short_lived():
+    sat = baseline_platform(800.0)
+    pop = coorbital_pop(sat, -1.5, mu=0.2)  # 800 km, mu=0.2: natural lifetime ~0.4 yr
+    res = run_engagements([sat], pop, duration_s=6 * 3600.0, chunk_s=300.0)
+    s = res.summary()
+    assert s["removed"] == 1
+    assert s["removed_credited"] == 0
+    assert s["debris_years_removed"] > 0
+    assert res.summary(credit_min_lifetime_s=0.0)["removed_credited"] == 1
+
+
+def test_toy_population_min_lifetime_filter():
+    from talos.constants import YEAR
+    from talos.lifetime import orbital_lifetime
+
+    pop = toy_population(2000, np.random.default_rng(2), min_lifetime_yr=1.0)
+    assert 0 < len(pop) < 2000
+    life = orbital_lifetime(pop.elements.a, pop.elements.e, pop.ballistic_coeff, max_s=2 * YEAR)
+    assert np.all(life > YEAR)

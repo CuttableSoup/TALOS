@@ -22,7 +22,7 @@ import numpy as np
 from .constants import R_EARTH, YEAR
 from .debris import DebrisPopulation
 from .engagement import AblationParams, integrate_burst, pulse_times
-from .lifetime import apply_dv, is_removed, move_epoch
+from .lifetime import apply_dv, is_removed, move_epoch, orbital_lifetime
 from .platform import Platform
 from .resources import ResourceState
 from .scheduler import burst_states, evaluate_candidates, pick
@@ -54,16 +54,26 @@ class SimResult:
     removed: np.ndarray  # bool per population sample
     max_duty: float  # steady-state duty ceiling from power/thermal, mean over platforms
     population: DebrisPopulation = field(repr=False)
+    # Natural lifetime at sim start and lifetime at sim end, for every engaged object
+    lifetime_initial_s: dict[int, float] = field(default_factory=dict)
+    lifetime_final_s: dict[int, float] = field(default_factory=dict)
 
     def records(self) -> list[dict]:
         return [asdict(e) for e in self.events]
 
-    def summary(self) -> dict:
+    def summary(self, credit_min_lifetime_s: float = YEAR, horizon_s: float = 200 * YEAR) -> dict:
         """Engagement and removal counts are physical events and are NOT scaled by
         sample weight: a platform fires at one target per burst. They represent the
         real system only when the run is target-saturated (``saturation`` ~ 1); a
         sparse sample under-counts. Increase N until these metrics converge.
+
+        ``removed_credited`` only counts objects whose natural lifetime exceeded
+        ``credit_min_lifetime_s`` (objects about to re-enter anyway earn no credit).
+        ``debris_years_removed`` sums lifetime reduction, capped at ``horizon_s``.
         """
+        li, lf = self.lifetime_initial_s, self.lifetime_final_s
+        credited = [j for j in np.flatnonzero(self.removed) if li.get(int(j), 0.0) > credit_min_lifetime_s]
+        dyears = sum(min(li[j], horizon_s) - min(lf[j], horizon_s) for j in li) / YEAR
         useful = [e for e in self.events if e.n_fired > 0 and e.dv_retrograde > 0]
         hours = self.duration_s / 3600.0
         duty = float(np.mean(list(self.fire_time_s.values()))) / self.duration_s
@@ -78,6 +88,10 @@ class SimResult:
             "saturation": duty / self.max_duty,
             "removed": int(self.removed.sum()),
             "removed_per_yr": float(self.removed.sum()) * YEAR / self.duration_s,
+            "removed_credited": len(credited),
+            "removed_credited_per_yr": len(credited) * YEAR / self.duration_s,
+            "debris_years_removed": dyears,
+            "debris_years_removed_per_yr": dyears * YEAR / self.duration_s,
         }
 
 
@@ -155,4 +169,11 @@ def run_engagements(
                 k = int(np.searchsorted(t, ready_at[plat.name]))
 
     max_duty = float(np.mean([s.steady_state_max_duty() for s in state.values()]))
-    return SimResult(events, duration_s, [p.name for p in platforms], fire_time, removed, max_duty, pop)
+    hit = np.array(sorted({e.debris_index for e in events}), dtype=int)
+    li, lf = {}, {}
+    if len(hit):
+        e0, e1 = population.elements[hit], pop.elements[hit]
+        B = pop.ballistic_coeff[hit]
+        li = dict(zip(hit.tolist(), np.atleast_1d(orbital_lifetime(e0.a, e0.e, B)).tolist()))
+        lf = dict(zip(hit.tolist(), np.atleast_1d(orbital_lifetime(e1.a, e1.e, B)).tolist()))
+    return SimResult(events, duration_s, [p.name for p in platforms], fire_time, removed, max_duty, pop, li, lf)
