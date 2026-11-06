@@ -78,7 +78,11 @@ def run_sweep(
     threads_per_job: int | None = None,
     progress: bool = True,
 ):
-    """Run ``configs`` across processes; returns a pandas DataFrame of summaries."""
+    """Run ``configs`` across processes; returns a pandas DataFrame of summaries.
+
+    On Windows (spawn start method) call this from inside an
+    ``if __name__ == "__main__":`` block, or worker processes crash on start.
+    """
     import pandas as pd
 
     names = [c.name for c in configs]
