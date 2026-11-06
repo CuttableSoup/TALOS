@@ -22,6 +22,7 @@ import numpy as np
 
 from .engagement import AblationParams
 from .platform import LaserConfig, baseline_constellation
+from .planner import CommitPlanner
 from .population import toy_population
 from .simulation import run_engagements
 
@@ -41,6 +42,9 @@ class RunConfig:
     score: str = "removal_progress"
     seed: int = 0
     stochastic: bool = True
+    planner: bool = False  # receding-horizon commitment planner
+    max_committed: int = 200
+    horizon_s: float = 6 * 3600.0
 
 
 def run_one(cfg: RunConfig) -> tuple[dict, list[dict]]:
@@ -50,11 +54,17 @@ def run_one(cfg: RunConfig) -> tuple[dict, list[dict]]:
                          areal_density=cfg.areal_density, min_lifetime_yr=cfg.min_lifetime_yr)
     plats = baseline_constellation(cfg.n_sats, cfg.altitudes_km,
                                    laser=LaserConfig(burst_power_w=cfg.burst_power_w, eta2=cfg.eta2))
-    res = run_engagements(plats, pop, cfg.duration_s, params=AblationParams(cm=cfg.cm),
+    params = AblationParams(cm=cfg.cm)
+    planner = (CommitPlanner(plats, params, max_committed=cfg.max_committed, horizon_s=cfg.horizon_s)
+               if cfg.planner else None)
+    res = run_engagements(plats, pop, cfg.duration_s, params=params,
                           rng=np.random.default_rng(cfg.seed + 1) if cfg.stochastic else None,
-                          score=cfg.score)
+                          score=cfg.score, planner=planner)
+    ev_c = [e for e in res.events if e.committed]
     row = {**{k: (str(v) if isinstance(v, tuple) else v) for k, v in asdict(cfg).items()},
-           **res.summary(), "wall_s": time.perf_counter() - t0}
+           **res.summary(), **{f"planner_{k}": v for k, v in res.planner_stats.items()},
+           "committed_engagement_frac": len(ev_c) / max(len(res.events), 1),
+           "wall_s": time.perf_counter() - t0}
     events = [{"run": cfg.name, **e} for e in res.records()]
     return row, events
 

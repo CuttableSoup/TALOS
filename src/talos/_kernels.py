@@ -79,9 +79,9 @@ if HAVE_NUMBA:
 
     @nb.njit(parallel=True, cache=True)
     def sieve_kernel(tc, r_sat, vmax, rmax, a0, adot, e, inc, raan0, raan_dot, argp0, argp_dot, M0, M_dot):
-        """Conservative coarse sieve; see screening.coarse_sieve for the bound."""
+        """Conservative coarse sieve; see screening.coarse_sieve for the bound.
+        ``tc`` may be non-uniform (the interval length is used per step)."""
         Tc, N = tc.shape[0], a0.shape[0]
-        h = tc[1] - tc[0] if Tc > 1 else 0.0
         keep = np.zeros(N, dtype=np.bool_)
         for j in nb.prange(N):
             prev = 0.0
@@ -90,7 +90,7 @@ if HAVE_NUMBA:
                 rx, ry, rz, _, _, _ = _rv(a, e[j], inc[j], O, w, M)
                 dx, dy, dz = rx - r_sat[k, 0], ry - r_sat[k, 1], rz - r_sat[k, 2]
                 rho = math.sqrt(dx * dx + dy * dy + dz * dz)
-                if rho <= rmax or (k > 0 and 0.5 * (prev + rho - vmax[j] * h) <= rmax):
+                if rho <= rmax or (k > 0 and 0.5 * (prev + rho - vmax[j] * (tc[k] - tc[k - 1])) <= rmax):
                     keep[j] = True
                     break
                 prev = rho

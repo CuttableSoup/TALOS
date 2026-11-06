@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import asdict, dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -27,6 +28,9 @@ from .platform import Platform
 from .resources import ResourceState
 from .scheduler import burst_states, evaluate_candidates, pick
 from .screening import screen_windows
+
+if TYPE_CHECKING:
+    from .planner import CommitPlanner
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,7 @@ class EngagementEvent:
     perigee_alt_before_m: float
     perigee_alt_after_m: float
     removed: bool
+    committed: bool = False  # target was in the planner's commit set
 
 
 @dataclass
@@ -57,6 +62,7 @@ class SimResult:
     # Natural lifetime at sim start and lifetime at sim end, for every engaged object
     lifetime_initial_s: dict[int, float] = field(default_factory=dict)
     lifetime_final_s: dict[int, float] = field(default_factory=dict)
+    planner_stats: dict = field(default_factory=dict)
 
     def records(self) -> list[dict]:
         return [asdict(e) for e in self.events]
@@ -110,7 +116,10 @@ def run_engagements(
     rng: np.random.Generator | None = None,
     batch: int = 1000,
     score: str = "removal_progress",
+    planner: "CommitPlanner | None" = None,
 ) -> SimResult:
+    """Run the engagement loop. With ``planner`` (a CommitPlanner), committed
+    objects take priority and fillers that would block a reservation are skipped."""
     pop = copy.deepcopy(population)
     removed = np.zeros(len(pop), dtype=bool)
     ready_at = {p.name: 0.0 for p in platforms}
@@ -121,7 +130,9 @@ def run_engagements(
     for c0 in np.arange(0.0, duration_s, chunk_s):
         t = c0 + np.arange(0.0, min(chunk_s, duration_s - c0), dt)
         engaged: set[int] = set()
-        for plat in platforms:
+        if planner is not None:
+            planner.refresh(float(t[0]), pop, removed)
+        for p_idx, plat in enumerate(platforms):
             wins = screen_windows(plat, pop, t, candidates=np.flatnonzero(~removed), batch=batch)
             if not wins:
                 continue
@@ -137,7 +148,20 @@ def run_engagements(
                     continue
                 rs = state[plat.name]
                 rs.advance(max(rs.t, t[k] + plat.atp.settle_s))
-                best = pick(evaluate_candidates(plat, pop, open_w, t, k, params, max_fire_s=rs.max_fire_s()), score)
+                cands = evaluate_candidates(plat, pop, open_w, t, k, params, max_fire_s=rs.max_fire_s())
+                is_commit = False
+                if planner is not None and cands:
+                    mine = [c for c in cands if planner.is_committed(c.debris_index)]
+                    if mine:
+                        best, is_commit = pick(mine, score), True
+                    else:
+                        best = pick(cands, score)
+                        blocked, resume = planner.filler_blocks(p_idx, rs, best, plat)
+                        if blocked:
+                            k = max(k + 1, int(np.searchsorted(t, resume)))
+                            continue
+                else:
+                    best = pick(cands, score)
                 if best is None:
                     k += 1
                     continue
@@ -155,6 +179,8 @@ def run_engagements(
                 _write_elements(pop, j, move_epoch(el_new, -tm))
                 removed[j] |= gone
                 engaged.add(j)
+                if planner is not None:
+                    planner.record(j, res.dv_retrograde, best.t_stop, pop, removed)
 
                 fire = best.t_stop - best.t_start
                 fire_time[plat.name] += fire
@@ -165,7 +191,7 @@ def run_engagements(
                     n_pulses=res.n_pulses, n_fired=res.n_fired, dv_retrograde=res.dv_retrograde,
                     dv_norm=float(np.linalg.norm(res.dv_vec)), optical_energy_j=res.optical_energy_j,
                     perigee_alt_before_m=float(el_tm.rp - R_EARTH),
-                    perigee_alt_after_m=float(el_new.rp - R_EARTH), removed=gone,
+                    perigee_alt_after_m=float(el_new.rp - R_EARTH), removed=gone, committed=is_commit,
                 ))
                 k = int(np.searchsorted(t, ready_at[plat.name]))
 
@@ -177,4 +203,5 @@ def run_engagements(
         B = pop.ballistic_coeff[hit]
         li = dict(zip(hit.tolist(), np.atleast_1d(orbital_lifetime(e0.a, e0.e, B)).tolist()))
         lf = dict(zip(hit.tolist(), np.atleast_1d(orbital_lifetime(e1.a, e1.e, B)).tolist()))
-    return SimResult(events, duration_s, [p.name for p in platforms], fire_time, removed, max_duty, pop, li, lf)
+    return SimResult(events, duration_s, [p.name for p in platforms], fire_time, removed, max_duty, pop, li, lf,
+                     dict(planner.stats, committed_now=len(planner.committed)) if planner is not None else {})

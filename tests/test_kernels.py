@@ -41,3 +41,14 @@ def test_kernel_respects_field_of_regard():
     t = np.arange(0.0, 600.0)
     tup = lambda ws: sorted((w.debris_index, w.start, w.stop) for w in ws)
     assert tup(screen_windows(sat, pop, t, use_kernel=True)) == tup(screen_windows(sat, pop, t, use_kernel=False))
+
+
+def test_screen_with_precomputed_sat_states_matches():
+    pop = toy_population(5000, np.random.default_rng(13))
+    sat = baseline_platform(800.0)
+    t = 123.0 + np.arange(0.0, 1000.0)
+    tup = lambda ws: sorted((w.debris_index, w.start, w.stop) for w in ws)
+    ref = tup(screen_windows(sat, pop, t, use_kernel=True))
+    got = tup(screen_windows(sat, pop, t, use_kernel=True, sat_states=states_at(sat.orbit, t)))
+    assert len(ref) > 0
+    assert got == ref

@@ -150,6 +150,7 @@ def screen_windows(
     batch: int = 1000,
     coarse_step_s: float | None = 30.0,
     use_kernel: bool | None = None,
+    sat_states: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> list[Window]:
     """Memory-bounded screening: windows only, objects processed in batches.
 
@@ -163,7 +164,7 @@ def screen_windows(
     if use_kernel is None:
         use_kernel = _kernels.HAVE_NUMBA
     if use_kernel and len(idx) and len(t) > 1:
-        return _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_s)
+        return _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_s, sat_states)
     if coarse_step_s is not None and len(idx) and len(t) > 1:
         keep = np.zeros(len(idx), dtype=bool)
         for k in range(0, len(idx), 4 * batch):
@@ -184,23 +185,36 @@ def screen_windows(
     return out
 
 
-def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_s) -> list[Window]:
-    """Numba path: parallel coarse sieve, then parallel fused fine gates."""
+def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_s, sat_states=None) -> list[Window]:
+    """Numba path: parallel coarse sieve, then parallel fused fine gates.
+
+    ``sat_states`` = (r, v) of the platform on grid ``t`` (precomputed/cached);
+    the coarse grid is then a strided subset of ``t`` so no extra propagation is needed.
+    """
     atp = platform.atp
     rmax = atp.engage_range_max_m
     sub = population.elements[idx]
     args = _kernels.element_args(sub, population.ballistic_coeff[idx])
+    if sat_states is not None:
+        r_s, v_s = sat_states
     if coarse_step_s is not None:
-        n = max(1, int(np.ceil((t[-1] - t[0]) / coarse_step_s)))
-        tc = np.linspace(t[0], t[-1], n + 1)
-        r_sc, _ = states_at(platform.orbit, tc)
+        if sat_states is not None:
+            dt = t[1] - t[0]
+            step = max(1, int(round(coarse_step_s / dt)))
+            ci = np.unique(np.append(np.arange(0, len(t), step), len(t) - 1))
+            tc, r_sc = np.ascontiguousarray(t[ci]), r_s[ci]
+        else:
+            n = max(1, int(np.ceil((t[-1] - t[0]) / coarse_step_s)))
+            tc = np.linspace(t[0], t[-1], n + 1)
+            r_sc, _ = states_at(platform.orbit, tc)
         vmax = np.ascontiguousarray(max_speed(platform.orbit) + max_speed(sub), dtype=float)
         keep = _kernels.sieve_kernel(tc, np.ascontiguousarray(r_sc), vmax, rmax, *args)
         idx = idx[keep]
         args = tuple(x[keep] for x in args)
     if not len(idx):
         return []
-    r_s, v_s = states_at(platform.orbit, t)
+    if sat_states is None:
+        r_s, v_s = states_at(platform.orbit, t)
     half = atp.field_of_regard_half_angle_rad
     cos_for = -1.0 if half >= np.pi else float(np.cos(half))
     mask = _kernels.fine_mask_kernel(
