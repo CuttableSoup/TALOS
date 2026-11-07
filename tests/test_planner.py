@@ -27,8 +27,15 @@ def test_rescreen_finds_opportunity_for_coorbital_object():
     assert len(opps) >= 1
     o = opps[0]
     assert o.platform == 0 and o.t_open == 0.0
-    assert o.latest_select == pytest.approx(o.t_close - sat.resources.min_burst_s - sat.atp.settle_s)
+    assert o.t_open <= o.latest_select <= o.t_close - sat.resources.min_burst_s - sat.atp.settle_s
     assert o.dv_pred > 0
+    # booked time is the best probed start: no worse than window open
+    from talos.scheduler import evaluate_candidates
+    from talos.screening import screen_windows
+    t = np.arange(0.0, 1800.0, 1.0)
+    w = screen_windows(sat, pop, t, candidates=np.array([0]))[0]
+    c0 = evaluate_candidates(sat, pop, [w], t, w.start, AblationParams())[0]
+    assert o.dv_pred >= c0.dv_retrograde - 1e-9
 
 
 def make_blocking_planner(sat, t_open, t_close):
@@ -81,3 +88,18 @@ def test_planner_run_concentrates_on_committed_objects():
     assert res.planner_stats["rescreens"] > 0
     hits = np.bincount([e.debris_index for e in committed])
     assert hits.max() >= 2  # committed objects get revisited
+
+
+def test_accept_gate_declines_weak_committed_burst():
+    sat = baseline_platform(800.0)
+    pl = make_blocking_planner(sat, t_open=0.0, t_close=100.0)  # booked dv_pred = 10
+    pl.objs[7].opps[0] = Opportunity(0, 0.0, 100.0, 40.0, 10.0)
+    weak = Candidate(7, 10.0, 20.0, 3.0, 330, 2.5e5, 150.0)
+    good = Candidate(7, 10.0, 20.0, 9.0, 330, 2.5e5, 150.0)
+    assert not pl.accept(0, weak, None, sat.atp.settle_s)
+    assert pl.accept(0, good, None, sat.atp.settle_s)
+    strong_filler = filler()
+    strong_filler = Candidate(1, 10.0, 20.0, 15.0, 330, 2.5e5, 150.0)
+    assert not pl.accept(0, good, strong_filler, sat.atp.settle_s)
+    late = Candidate(7, 60.0, 70.0, 3.0, 330, 2.5e5, 150.0)  # past booked time: take what's left
+    assert pl.accept(0, late, None, sat.atp.settle_s)

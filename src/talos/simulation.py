@@ -152,10 +152,16 @@ def run_engagements(
                 is_commit = False
                 if planner is not None and cands:
                     mine = [c for c in cands if planner.is_committed(c.debris_index)]
-                    if mine:
-                        best, is_commit = pick(mine, score), True
+                    rest = [c for c in cands if not planner.is_committed(c.debris_index)]
+                    bc = pick(mine, score) if mine else None
+                    bf = pick(rest, score) if rest else None
+                    if bc is not None and planner.accept(p_idx, bc, bf, plat.atp.settle_s):
+                        best, is_commit = bc, True
+                    elif bf is None:
+                        k += 1
+                        continue
                     else:
-                        best = pick(cands, score)
+                        best = bf
                         blocked, resume = planner.filler_blocks(p_idx, rs, best, plat)
                         if blocked:
                             k = max(k + 1, int(np.searchsorted(t, resume)))

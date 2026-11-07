@@ -14,7 +14,11 @@ per object:
   * Reservation: a platform may fire a filler burst only if it will have
     recovered (true resource model) in time to take the committed object's
     next opportunity on that platform; otherwise it waits for it.
-  * Committed candidates that are open now always win over fillers.
+  * Each opportunity is booked at its best predicted burst start within the
+    window (sampled every ``probe_s``), not at window open (max range).
+  * A committed candidate open now is taken only if it gets >= ``quality`` x
+    both its booked prediction and the best filler's retrograde dv; otherwise
+    the platform behaves greedily (subject to the reservation check).
 
 Objects with no viable opportunity in the horizon are released.
 
@@ -42,8 +46,8 @@ class Opportunity:
     platform: int
     t_open: float
     t_close: float
-    latest_select: float  # last grid time a burst can be chosen and still meet min_burst
-    dv_pred: float
+    latest_select: float  # booked selection time (best burst start - settle)
+    dv_pred: float  # predicted retrograde dv at the booked time
 
 
 @dataclass
@@ -63,6 +67,8 @@ class CommitPlanner:
         horizon_s: float = 6 * 3600.0,
         dt: float = 1.0,
         min_dv_frac: float = 0.25,
+        quality: float = 0.8,
+        probe_s: float = 10.0,
     ) -> None:
         self.platforms = platforms
         self.params = params
@@ -70,6 +76,8 @@ class CommitPlanner:
         self.horizon_s = horizon_s
         self.dt = dt
         self.min_dv_frac = min_dv_frac  # opp must predict >= this x object's mean realized dv
+        self.quality = quality
+        self.probe_s = probe_s
         self.objs: dict[int, _ObjState] = {}
         self.committed: set[int] = set()
         self.retry_after: dict[int, float] = {}  # back-off for objects with no viable opportunity
@@ -77,7 +85,8 @@ class CommitPlanner:
         self._cache_t0: float | None = None
         self._cache: list[tuple[np.ndarray, np.ndarray]] = []
         self._cache_len = 0
-        self.stats = {"rescreens": 0, "released": 0, "blocked_fillers": 0, "committed_fired": 0}
+        self.stats = {"rescreens": 0, "released": 0, "blocked_fillers": 0, "committed_fired": 0,
+                      "committed_declined": 0}
 
     # ---- bookkeeping -------------------------------------------------------
     def is_committed(self, j: int) -> bool:
@@ -177,15 +186,36 @@ class CommitPlanner:
             res, atp = plat.resources, plat.atp
             r_c, v_c = cache[p_idx]
             states = (r_c[i0:i0 + n], v_c[i0:i0 + n])
+            step = max(1, int(round(self.probe_s / self.dt)))
             for w in screen_windows(plat, pop, t, candidates=cand, sat_states=states):
-                c = evaluate_candidates(plat, pop, [w], t, w.start, self.params)
-                if not c or c[0].dv_retrograde < self.min_dv_frac * mean_dv:
+                last = max(w.start, w.stop - 1 - int(np.ceil((res.min_burst_s + atp.settle_s) / self.dt)))
+                best_k, best_dv = None, -np.inf
+                for k in np.unique(np.append(np.arange(w.start, last + 1, step), last)):
+                    c = evaluate_candidates(plat, pop, [w], t, int(k), self.params)
+                    if c and c[0].dv_retrograde > best_dv:
+                        best_k, best_dv = int(k), c[0].dv_retrograde
+                if best_k is None or best_dv < self.min_dv_frac * mean_dv:
                     continue
-                t_close = t[w.stop - 1] + self.dt
-                opps.append(Opportunity(p_idx, t[w.start], t_close,
-                                        t_close - res.min_burst_s - atp.settle_s, c[0].dv_retrograde))
+                opps.append(Opportunity(p_idx, t[w.start], t[w.stop - 1] + self.dt, t[best_k], best_dv))
         opps.sort(key=lambda o: o.t_open)
         s.opps, s.ptr = opps, 0
+
+    # ---- selection gate ----------------------------------------------------
+    def accept(self, p_idx: int, c: Candidate, filler: Candidate | None, settle_s: float) -> bool:
+        """Take committed candidate ``c`` now, or hold out for a better moment / filler?"""
+        s = self.objs[c.debris_index]
+        t_sel = c.t_start - settle_s
+        ref = 0.0
+        for o in s.opps[s.ptr:]:
+            if o.platform == p_idx and o.t_open <= t_sel <= o.t_close:
+                ref = o.dv_pred if t_sel <= o.latest_select else 0.0  # past the booked time: take what's left
+                break
+        if filler is not None:
+            ref = max(ref, filler.dv_retrograde)
+        ok = c.dv_retrograde >= self.quality * ref
+        if not ok:
+            self.stats["committed_declined"] += 1
+        return ok
 
     # ---- reservation check -------------------------------------------------
     def next_reservation(self, p_idx: int, t_now: float) -> tuple[Opportunity, int] | None:
