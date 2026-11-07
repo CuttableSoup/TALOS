@@ -136,9 +136,23 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
   removal_progress): the README's "7–30 sim days, extrapolate to 1 yr" plan
   under-counts. Need longer runs or a steady-state detector. A 30-day 4-sat run
   takes ~30 min (3 runs in parallel, 10 threads each).
+- Receding-horizon commitment planner (`talos/planner.py`, `RunConfig(planner=True)`)
+  does NOT beat greedy removal_progress. 30-day, same setup (runs/compare_planner*):
+  | variant | removed (30 d) | Δv/eng | committed frac | wall |
+  |---|---|---|---|---|
+  | greedy removal_progress | 942 | 9.7 | — | ~30 min |
+  | v1 M=50 / 200 / 800 (book window open, always commit) | 637 / 304 / 167 | 8.7 / 6.6 / 4.3 | 15 / 46 / 81 % | 52–100 min |
+  | v2 M=50 (best-in-window booking + 0.8 quality gate) | 895 | 9.73 | 4 % | 55 min |
+  | v2 M=200 | 865 | 9.79 | 15 % | 108 min |
+  v1 committed bursts got 2–3 m/s (half the pulses above threshold). v2 fixes
+  burst quality, but reservations block fillers (~5–9 % fewer engagements) and
+  most committed opportunities are declined anyway. Greedy removal_progress
+  already revisits partly lowered objects; at ~10 m/s/engagement there is no
+  margin for waiting. Kept as an option, off by default. Might matter when Δv per
+  engagement is larger (μ=0.2) or for a platform not saturated with targets.
 - `debris_years_removed` is dominated by small Δv on very long-lived (μ=10)
   objects and depends on the 200-yr cap
 
 ## Next step
-Receding-horizon scheduler that reserves bursts for upcoming passes of partly
-lowered objects; longer runs / steady-state detection; MASTER population (module 1).
+Longer runs / steady-state detection; MASTER population (module 1). Optionally
+re-test the planner at μ=0.2 and with fewer sats.
