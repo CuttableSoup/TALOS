@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from talos.platform import LaserConfig, ResourceConfig
-from talos.resources import ResourceState
+from talos.resources import SIGMA, ResourceState
 
 
 def state(**kw):
@@ -11,27 +11,55 @@ def state(**kw):
 
 def test_baseline_rates():
     s = state()
-    assert s.p_elec == pytest.approx(25e3 / 0.15)
-    assert s.p_heat == pytest.approx(25e3 / 0.15 - 25e3)
-    assert s.p_rad == pytest.approx(12e3)
-    # thermal-limited: 12 kW / 141.7 kW
-    assert s.steady_state_max_duty() == pytest.approx(12e3 / s.p_heat)
+    assert s.p_elec == pytest.approx(25e3 / 0.10)
+    assert s.p_heat == pytest.approx(225e3)
+    # research table: two-sided net flux ~445 W/m^2 at a 280 K radiator
+    assert s.q_net(280.0) == pytest.approx(445.0, rel=0.02)
+    assert s.q_net(300.0) == pytest.approx(615.0, rel=0.03)
 
 
-def test_fire_then_recover_cycle():
+def test_radiator_follows_t4():
+    s = state(earth_ir_w_m2=0.0, radiator_other_load_w_m2=0.0, fin_efficiency=1.0, radiator_sides=1,
+              radiator_emissivity=1.0)
+    assert s.q_net(300.0) == pytest.approx(SIGMA * 300.0 ** 4)
+    assert s.p_rad_at(310.0) > s.p_rad_at(300.0)
+
+
+def test_enthalpy_temperature_map():
+    s = state()
+    c = s.cfg
+    assert s.temp_of(0.0) == pytest.approx(c.t_min_k)
+    assert s.temp_of(s._H1 + 0.5 * c.pcm_latent_j) == pytest.approx(c.pcm_melt_k)
+    assert s.temp_of(s.h_max) == pytest.approx(c.t_max_k)
+
+
+def test_fire_then_recover_cycle_matches_steady_state_duty():
     s = state()
     f = s.cfg.burst_s
     assert s.max_fire_s() >= f
-    s.fire(f)
-    assert s.heat_j == pytest.approx((s.p_heat - s.p_rad) * f)
-    w = s.wait_for(f)
-    assert w > 0
-    s.advance(s.t + w)
-    assert s.max_fire_s() == pytest.approx(f, rel=1e-6)
-    # thermal-limited cycle period = f + w, consistent with steady-state duty
-    s.fire(f)
-    w2 = s.wait_for(f)
-    assert f / (f + w2) == pytest.approx(s.steady_state_max_duty(), rel=1e-6)
+    for _ in range(40):
+        s.fire(f)
+        w = s.wait_for(f)
+        assert np.isfinite(w) and w >= 0  # 0 while the store still has spare capacity
+        s.advance(s.t + w)
+        assert s.max_fire_s() >= f - 1e-6
+    # cycling on the melt plateau: duty = (rad - idle) / (fire_in - idle); bursts poke into
+    # the sensible band above melt where the radiator runs hotter, so slightly above
+    assert s.temperature_k == pytest.approx(s.cfg.pcm_melt_k)
+    assert f / (f + w) == pytest.approx(s.steady_state_max_duty(), rel=0.02)
+
+
+def test_bigger_radiator_raises_duty():
+    d = [state(radiator_area_m2=a).steady_state_max_duty() for a in (20.0, 40.0, 60.0)]
+    assert d[0] < d[1] < d[2]
+    assert d[0] == pytest.approx(0.029, abs=0.003)  # research sanity check: ~3.6 % before battery losses
+
+
+def test_idle_cools_to_heater_floor():
+    s = state()
+    s.fire(10.0)
+    s.advance(s.t + 1e5)
+    assert s.heat_j == 0.0 and s.temperature_k == pytest.approx(s.cfg.t_min_k)
 
 
 def test_overfire_raises():
@@ -43,12 +71,11 @@ def test_overfire_raises():
 def test_power_limited_when_array_small():
     s = state(array_area_m2=10.0, battery_capacity_j=2e6, radiator_area_m2=1e3)
     assert s.steady_state_max_duty() == pytest.approx(s.p_charge / s.p_elec)
-    f = s.max_fire_s()
-    assert f == pytest.approx(2e6 / (s.p_elec - s.p_charge))
+    assert s.max_fire_s() == pytest.approx(2e6 / (s.p_elec - s.p_charge))
 
 
 def test_burst_that_never_fits():
-    s = state(heat_buffer_j=1e5)
+    s = state(pcm_mass_kg=0.0, heat_capacity_j_k=1e4)
     assert np.isinf(s.wait_for(10.0))
 
 

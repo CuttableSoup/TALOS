@@ -71,7 +71,11 @@ def test_engagement_rate_respects_thermal_ceiling():
     # each full burst needs ~burst_s/max_duty of wall time; shorter bursts are >= min_burst_s
     cap_per_hr = 3600.0 / (r.min_burst_s / res.max_duty)
     assert s["useful_engagements_per_hr_per_sat"] <= cap_per_hr
-    assert s["duty_cycle_mean"] <= 1.05 * res.max_duty
+    # plus the one-off firing the initially empty heat store allows
+    from talos.resources import ResourceState
+    rs = ResourceState(r, sat.laser)
+    head_start = rs.h_max / (rs.p_fire_in - rs.p_rad_at(r.pcm_melt_k)) / (3 * 3600.0)
+    assert s["duty_cycle_mean"] <= 1.05 * res.max_duty + head_start
 
 
 def test_removal_credit_excludes_short_lived():

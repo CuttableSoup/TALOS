@@ -107,13 +107,36 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 | Debris count in band | `toy_population(n_real=)` | 100k (Phipps) | MASTER all-LEO 1–10 cm ≈ 1.2M; 600–1000 km share unsourced |
 | Settle / retarget | `ATPConfig.settle_s` | 5 s, not overlapped | guess (conservative) |
 | Min burst | `ResourceConfig.min_burst_s` | 5 s | guess |
-| Heat buffer | `ResourceConfig.heat_buffer_j` | 1.5 MJ | ≈ one 10 s burst of net heat |
-| Radiator area | `ResourceConfig.radiator_area_m2` | 20 m² | gives ~118 s recovery ≈ README's 120 s |
-| Battery / bus | `ResourceConfig` | 2 kWh / 1.5 kW | guess |
+| Wall-plug (elec → 355 nm) | `ResourceConfig.wallplug_eff` | 0.10 (range 0.04–0.17) | **sourced** chain 0.9×0.55×0.45×0.40; ATLAS flight 8.2 % at 532 nm |
+| Radiator net flux | `ResourceState.q_net(T)` | fin·sides·[εσT⁴ − εF_E·237 − 5], ε 0.9, F_E 0.22, fin 0.85, 2-sided → 445 W/m² at 280 K | **sourced** inputs, derived relation |
+| Store → radiator ΔT | `radiator_dT_k` | 8 K (pumped two-phase; LHP ~20 K) | **sourced** (ATLAS, AMS-02 TTCS) |
+| PCM store | `pcm_melt_k`, `pcm_mass_kg`, `pcm_specific_j_kg` | 15 °C, 25 kg × 120 kJ/kg = 3 MJ | storage density **sourced**; melt point / salt-hydrate choice unsourced |
+| Sensible heat capacity | `heat_capacity_j_k` | 0.5 MJ/K | **guess** (0.2–1) |
+| Store temperature band | `t_min_k`, `t_max_k` | melt −5 K (heaters) … melt +2 K | guess |
+| Radiator area | `ResourceConfig.radiator_area_m2` | 20 m² | **design choice, dominant**: 20 m² → 2.9 % duty; ~60 m² for 10 % |
+| Battery | `ResourceConfig` | 2 kWh, 85 % round trip (losses → heat) | capacity guess; cycle life NOT modelled |
+| Bus | `bus_power_w` | 1.5 kW, dissipated into the thermal node | guess |
 | Field of regard | `ATPConfig.field_of_regard_half_angle_rad` | unrestricted | guess |
-| Sunlight | `resources.py` | always sunlit | dawn-dusk SSO, eclipse season ignored |
+| Sunlight | `resources.py` | always sunlit | **wrong Nov–Feb**: ~20 min eclipse/orbit (BRITE flight data) |
 
 ## Open issues
+- Thermal model (2026-11 research pass) is now a lumped PCM/loop node with T⁴
+  radiator. Baseline duty fell 8.5 % → 2.9 % (wall-plug 15 → 10 %, net flux
+  600 → 445 W/m², bus + battery heat). 1-day, 4 sats, 100k (engagements/hr/sat):
+  | radiator | wall-plug 0.10 | wall-plug 0.15 |
+  |---|---|---|
+  | 20 m² | 10.9 (2.9 % duty) | 17.5 (4.7 %) |
+  | 40 m² | 23.9 (6.4 %) | 38.4 (10.3 %) |
+  | 60 m² | 37.0 (9.9 %) | — |
+  Engagement rate is linear in radiator area at ~10 kg/m² (research). **All
+  30-day results below used the old 8.5 % thermal model and overstate removals
+  at a 20 m² radiator by ~3×.**
+- Battery cycle life: ~600 bursts/day ≈ 1.1 M cycles in 5 yr at ~30 % DoD and
+  ~70C; space Li-ion is tested to ~27–65 k cycles. Not modelled; needs a
+  supercapacitor/LTO buffer or a much larger battery. Unsourced.
+- Not modelled: eclipse season, M²/thermal-lens transients at burst start
+  (fluence ∝ 1/M⁴), THG crystal detuning (±0.1 K), diode wavelength drift,
+  heater power, radiator EOL absorptivity and self-view (−10–30 %).
 - η₁ (mean 0.3) and the 45° thrust angle may double-count: if the sourced η₁ is
   already a beam-axis average, applying cos(45°) on top cuts Δv by another ~30%
 - Gate 1 not independent (η₂ backed out of the same L'ADROIT numbers)

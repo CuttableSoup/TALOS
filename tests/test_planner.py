@@ -55,11 +55,12 @@ def filler(t0=5.0, f=10.0):
 def test_filler_blocked_by_imminent_reservation():
     sat = baseline_platform(800.0)
     rs = ResourceState(sat.resources, sat.laser)
+    rs.heat_j = h0 = rs._allowed_start(10.0)  # store has room for exactly one more burst
     pl = make_blocking_planner(sat, t_open=30.0, t_close=60.0)  # latest select = 50 s
     blocked, resume = pl.filler_blocks(0, rs, filler(), sat)
     assert blocked
     assert resume >= 25.0  # t_open - settle
-    assert rs.t == 0.0 and rs.heat_j == 0.0  # real state untouched
+    assert rs.t == 0.0 and rs.heat_j == h0  # real state untouched
 
 
 def test_filler_allowed_when_reservation_is_far():

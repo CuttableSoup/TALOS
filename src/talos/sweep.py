@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from .engagement import AblationParams
-from .platform import LaserConfig, baseline_constellation
+from .platform import LaserConfig, ResourceConfig, baseline_constellation
 from .planner import CommitPlanner
 from .population import toy_population
 from .simulation import run_engagements
@@ -34,6 +34,8 @@ class RunConfig:
     altitudes_km: tuple[float, ...] = (700.0, 800.0, 900.0)
     burst_power_w: float = 25e3
     eta2: float = 0.40
+    wallplug_eff: float = 0.10
+    radiator_area_m2: float = 20.0
     cm: float = 50e-6
     areal_density: float = 1.0
     n_real: float = 1.0e5
@@ -53,7 +55,9 @@ def run_one(cfg: RunConfig) -> tuple[dict, list[dict]]:
     pop = toy_population(int(cfg.n_real), np.random.default_rng(cfg.seed), n_real=cfg.n_real,
                          areal_density=cfg.areal_density, min_lifetime_yr=cfg.min_lifetime_yr)
     plats = baseline_constellation(cfg.n_sats, cfg.altitudes_km,
-                                   laser=LaserConfig(burst_power_w=cfg.burst_power_w, eta2=cfg.eta2))
+                                   laser=LaserConfig(burst_power_w=cfg.burst_power_w, eta2=cfg.eta2),
+                                   resources=ResourceConfig(wallplug_eff=cfg.wallplug_eff,
+                                                            radiator_area_m2=cfg.radiator_area_m2))
     params = AblationParams(cm=cfg.cm)
     planner = (CommitPlanner(plats, params, max_committed=cfg.max_committed, horizon_s=cfg.horizon_s)
                if cfg.planner else None)
