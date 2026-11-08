@@ -139,7 +139,7 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
   | 60 m² | 37.0 (9.9 %) | — |
   Engagement rate is linear in radiator area at ~10 kg/m² (research). **All
   30-day results below used the old 8.5 % thermal model and overstate removals
-  at a 20 m² radiator by ~3×.**
+  at a 20 m² radiator by ~7× (942 → 134 removed in 30 d).**
 - Sun model (2026-11): 1-day, 4 sats, 100k, 20 m² radiator (engagements/hr/sat):
   sun off 10.9 · June (no eclipse) 10.8 · December 10.1 (17.6 % eclipse) ·
   December without the sunlit-target gate 10.1. Eclipse costs ~7 % because
@@ -147,6 +147,19 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
   sunlit-target gate costs ~5 % Δv/engagement (fewer choices), not rate. No
   heater energy or brownouts at 1.5 kW bus. A 06:00 LTAN gives the Dec–Jan
   eclipse season (18:00 → June); eclipse onset is ~2 months either side.
+- 30-day, TOML baseline (Dec 21 start, sun + thermal model, 4 sats, 100k, μ=1),
+  `scripts/compare_radiator.py` → runs/compare_radiator:
+  | radiator | eng/hr/sat | duty | removed (30 d) | credited/yr | debris-yr/yr | weekly removals |
+  |---|---|---|---|---|---|---|
+  | 20 m² | 10.2 | 2.7 % | 134 | 1.6k | 169k | 8, 29, 28, 52 |
+  | 40 m² | 21.1 | 5.6 % | 432 | 5.3k | 330k | 20, 75, 141, 159 |
+  | 60 m² | 32.0 | 8.5 % | 776 | 9.4k | 477k | 28, 143, 206, 303 |
+  Removals grow ~quadratically with engagement rate (3.1× rate → 5.8×
+  removals): an object needs ~17 bursts, so more shots per day finish more
+  objects inside the window. 60 m² matches the old model's 8.5 % duty but
+  removes 776 vs 942: eclipse (15.6 %) and the sun gates cost ~18 %. Removal
+  rate still climbing at day 30 at every area. Heaters draw 0.3–2.8 kWh/day
+  at 40–60 m² (bigger radiator overcools in eclipse); no brownouts.
 - Battery cycle life: ~600 bursts/day ≈ 1.1 M cycles in 5 yr at ~30 % DoD and
   ~70C; space Li-ion is tested to ~27–65 k cycles. Not modelled; needs a
   supercapacitor/LTO buffer or a much larger battery. Unsourced.
