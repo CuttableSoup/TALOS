@@ -55,7 +55,8 @@ def filler(t0=5.0, f=10.0):
 def test_filler_blocked_by_imminent_reservation():
     sat = baseline_platform(800.0)
     rs = ResourceState(sat.resources, sat.laser)
-    rs.heat_j = h0 = rs._allowed_start(10.0)  # store has room for exactly one more burst
+    rs.heat_j = h0 = rs.h_max - 2.6e6  # store has room for about one more 10 s burst
+    assert 10.0 <= rs.max_fire_s() < 11.0
     pl = make_blocking_planner(sat, t_open=30.0, t_close=60.0)  # latest select = 50 s
     blocked, resume = pl.filler_blocks(0, rs, filler(), sat)
     assert blocked

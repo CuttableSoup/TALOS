@@ -15,57 +15,34 @@ import itertools
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Mapping
 
-import numpy as np
-
-from .engagement import AblationParams
-from .platform import LaserConfig, ResourceConfig, baseline_constellation
-from .planner import CommitPlanner
-from .population import toy_population
-from .simulation import run_engagements
+from .config import Scenario, load_scenario, run_scenario
 
 
 @dataclass(frozen=True)
 class RunConfig:
+    """One sweep point: a scenario TOML plus dotted overrides, e.g.
+    ``RunConfig("hi_power", overrides={"laser.burst_power_kw": 50})``."""
+
     name: str
-    n_sats: int = 4
-    altitudes_km: tuple[float, ...] = (700.0, 800.0, 900.0)
-    burst_power_w: float = 25e3
-    eta2: float = 0.40
-    wallplug_eff: float = 0.10
-    radiator_area_m2: float = 20.0
-    cm: float = 50e-6
-    areal_density: float = 1.0
-    n_real: float = 1.0e5
-    min_lifetime_yr: float | None = 1.0
-    duration_s: float = 86400.0
-    score: str = "removal_progress"
-    seed: int = 0
-    stochastic: bool = True
-    planner: bool = False  # receding-horizon commitment planner
-    max_committed: int = 200
-    horizon_s: float = 6 * 3600.0
+    config: str | None = None  # TOML path; None -> config/baseline.toml
+    overrides: Mapping[str, Any] = field(default_factory=dict)
+
+    def scenario(self) -> Scenario:
+        return load_scenario(self.config, {"run.name": self.name, **self.overrides})
 
 
 def run_one(cfg: RunConfig) -> tuple[dict, list[dict]]:
-    """Build population + constellation from ``cfg``, run, return (summary row, events)."""
+    """Build and run ``cfg``'s scenario; return (summary row, events)."""
     t0 = time.perf_counter()
-    pop = toy_population(int(cfg.n_real), np.random.default_rng(cfg.seed), n_real=cfg.n_real,
-                         areal_density=cfg.areal_density, min_lifetime_yr=cfg.min_lifetime_yr)
-    plats = baseline_constellation(cfg.n_sats, cfg.altitudes_km,
-                                   laser=LaserConfig(burst_power_w=cfg.burst_power_w, eta2=cfg.eta2),
-                                   resources=ResourceConfig(wallplug_eff=cfg.wallplug_eff,
-                                                            radiator_area_m2=cfg.radiator_area_m2))
-    params = AblationParams(cm=cfg.cm)
-    planner = (CommitPlanner(plats, params, max_committed=cfg.max_committed, horizon_s=cfg.horizon_s)
-               if cfg.planner else None)
-    res = run_engagements(plats, pop, cfg.duration_s, params=params,
-                          rng=np.random.default_rng(cfg.seed + 1) if cfg.stochastic else None,
-                          score=cfg.score, planner=planner)
+    sc = cfg.scenario()
+    res = run_scenario(sc)
     ev_c = [e for e in res.events if e.committed]
-    row = {**{k: (str(v) if isinstance(v, tuple) else v) for k, v in asdict(cfg).items()},
+    row = {"name": cfg.name, "config": cfg.config or "baseline",
+           **{f"ovr.{k}": (str(v) if isinstance(v, (tuple, list)) else v) for k, v in cfg.overrides.items()},
            **res.summary(), **{f"planner_{k}": v for k, v in res.planner_stats.items()},
            "committed_engagement_frac": len(ev_c) / max(len(res.events), 1),
            "wall_s": time.perf_counter() - t0}
@@ -82,7 +59,8 @@ def _init_worker(threads: int) -> None:
 
 def _warm_jit() -> None:
     """Compile/load the numba kernels once in the parent so workers hit the cache."""
-    run_one(RunConfig(name="_warm", n_sats=1, n_real=2000, duration_s=120.0, min_lifetime_yr=None))
+    run_one(RunConfig("_warm", overrides={"constellation.n_sats": 1, "population.n_real": 2000,
+                                          "run.duration_s": 120.0, "population.min_lifetime_yr": None}))
 
 
 def run_sweep(
@@ -136,20 +114,22 @@ def run_sweep(
     return df
 
 
-def readme_matrix(base: RunConfig = RunConfig(name="base"), **overrides) -> list[RunConfig]:
-    """The README sweep: power x sats x orbit config x Cm x mu (x eta2)."""
+def readme_matrix(base: RunConfig = RunConfig(name="base"), **axes_override) -> list[RunConfig]:
+    """The README sweep: power x sats x orbit config x Cm x mu. Axis keys are dotted
+    scenario keys; pass ``axes_override={...}`` entries to replace or add axes."""
     axes = {
-        "burst_power_w": [5e3, 10e3, 20e3, 30e3, 50e3],
-        "n_sats": [1, 2, 4, 8],
-        "altitudes_km": [(800.0,), (700.0, 800.0, 900.0)],
-        "cm": [25e-6, 50e-6, 100e-6],
-        "areal_density": [0.2, 1.0, 10.0],
+        "laser.burst_power_kw": [5.0, 10.0, 20.0, 30.0, 50.0],
+        "constellation.n_sats": [1, 2, 4, 8],
+        "constellation.altitudes_km": [(800.0,), (700.0, 800.0, 900.0)],
+        "ablation.cm_n_per_mw": [25.0, 50.0, 100.0],
+        "population.areal_density": [0.2, 1.0, 10.0],
     }
-    axes.update(overrides)
+    axes.update(axes_override)
     keys = list(axes)
     out = []
     for vals in itertools.product(*(axes[k] for k in keys)):
         kw = dict(zip(keys, vals))
-        tag = "_".join(f"{k}={'-'.join(map(str, v)) if isinstance(v, tuple) else v}" for k, v in kw.items())
-        out.append(replace(base, name=tag, **kw))
+        tag = "_".join(f"{k.split('.')[-1]}={'-'.join(map(str, v)) if isinstance(v, tuple) else v}"
+                       for k, v in kw.items())
+        out.append(RunConfig(name=tag, config=base.config, overrides={**base.overrides, **kw}))
     return out

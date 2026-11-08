@@ -5,7 +5,8 @@ from talos.sweep import RunConfig, run_sweep
 
 def main(days: float, scores: list[str], mus: list[float], out: str) -> None:
     cfgs = [
-        RunConfig(name=f"{score}_mu{mu}", score=score, areal_density=mu, duration_s=days * 86400.0)
+        RunConfig(f"{score}_mu{mu}", overrides={"run.score": score, "population.areal_density": mu,
+                                                "run.duration_days": days})
         for mu in mus
         for score in scores
     ]

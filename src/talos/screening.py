@@ -59,14 +59,28 @@ class ScreenResult:
     los_ok: np.ndarray
     in_for: np.ndarray
     slew_ok: np.ndarray
+    sun_ok: np.ndarray | bool = True  # target sunlit and LOS outside the sun-exclusion cone
 
     @property
     def mask(self) -> np.ndarray:
-        return self.in_range & self.los_ok & self.in_for & self.slew_ok
+        return self.in_range & self.los_ok & self.in_for & self.slew_ok & self.sun_ok
 
 
-def screen_fine(t, r_sat, v_sat, r_deb, v_deb, atp: ATPConfig) -> ScreenResult:
-    """Gate checks. ``r_sat``/``v_sat``: (T, 3); ``r_deb``/``v_deb``: (T, N, 3)."""
+def sun_gate(r_rel, rng, r_deb, sun_hat, atp: ATPConfig) -> np.ndarray:
+    """Target sunlit (cylindrical shadow, if required) and LOS outside the sun-exclusion cone.
+    ``sun_hat``: (T, 3)."""
+    from .sun import target_lit
+
+    s = sun_hat[:, None, :]
+    ok = np.sum(r_rel * s, -1) / rng <= np.cos(atp.sun_exclusion_rad)
+    if atp.require_target_sunlit:
+        ok &= target_lit(r_deb, s)
+    return ok
+
+
+def screen_fine(t, r_sat, v_sat, r_deb, v_deb, atp: ATPConfig, sun_hat=None) -> ScreenResult:
+    """Gate checks. ``r_sat``/``v_sat``: (T, 3); ``r_deb``/``v_deb``: (T, N, 3);
+    ``sun_hat``: optional (T, 3) sun unit vectors enabling the sun gates."""
     r_sat = r_sat[:, None, :]
     v_sat = v_sat[:, None, :]
     r_rel = r_deb - r_sat
@@ -74,6 +88,7 @@ def screen_fine(t, r_sat, v_sat, r_deb, v_deb, atp: ATPConfig) -> ScreenResult:
     rng = np.linalg.norm(r_rel, axis=-1)
     slew = los_angular_rate(r_rel, v_rel)
     return ScreenResult(
+        sun_ok=True if sun_hat is None else sun_gate(r_rel, rng, r_deb, sun_hat, atp),
         t=np.asarray(t),
         range_m=rng,
         slew_rate=slew,
@@ -151,12 +166,14 @@ def screen_windows(
     coarse_step_s: float | None = 30.0,
     use_kernel: bool | None = None,
     sat_states: tuple[np.ndarray, np.ndarray] | None = None,
+    sun_hat: np.ndarray | None = None,
 ) -> list[Window]:
     """Memory-bounded screening: windows only, objects processed in batches.
 
     ``candidates`` optionally restricts to these population indices (e.g. not yet removed).
     ``coarse_step_s`` enables the conservative coarse sieve (None = fine-step everything).
     Window ``debris_index`` refers to the original population index.
+    ``sun_hat`` (T, 3) enables the sun gates (target sunlit, sun exclusion).
     """
     idx = np.arange(len(population)) if candidates is None else np.asarray(candidates)
     rmax = platform.atp.engage_range_max_m
@@ -164,7 +181,8 @@ def screen_windows(
     if use_kernel is None:
         use_kernel = _kernels.HAVE_NUMBA
     if use_kernel and len(idx) and len(t) > 1:
-        return _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_s, sat_states)
+        return _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_s, sat_states,
+                                      sun_hat)
     if coarse_step_s is not None and len(idx) and len(t) > 1:
         keep = np.zeros(len(idx), dtype=bool)
         for k in range(0, len(idx), 4 * batch):
@@ -174,18 +192,19 @@ def screen_windows(
                 t, rmax, coarse_step_s,
             )
         idx = idx[keep]
-    r_s, v_s = states_at(platform.orbit, t)
+    r_s, v_s = sat_states if sat_states is not None else states_at(platform.orbit, t)
     out: list[Window] = []
     for k in range(0, len(idx), batch):
         cols = idx[k : k + batch]
         sub = population.subset(cols)
         r_d, v_d = states_at(sub.elements, t, sub.ballistic_coeff)
-        mask = screen_fine(t, r_s, v_s, r_d, v_d, platform.atp).mask
+        mask = screen_fine(t, r_s, v_s, r_d, v_d, platform.atp, sun_hat).mask
         out += [Window(int(cols[w.debris_index]), w.start, w.stop) for w in find_windows(mask, min_steps)]
     return out
 
 
-def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_s, sat_states=None) -> list[Window]:
+def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_s, sat_states=None,
+                           sun_hat=None) -> list[Window]:
     """Numba path: parallel coarse sieve, then parallel fused fine gates.
 
     ``sat_states`` = (r, v) of the platform on grid ``t`` (precomputed/cached);
@@ -220,7 +239,10 @@ def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_
     mask = _kernels.fine_mask_kernel(
         np.asarray(t, float), np.ascontiguousarray(r_s), np.ascontiguousarray(v_s),
         atp.engage_range_min_m, rmax, R_EARTH + atp.earth_clearance_alt_m, cos_for,
-        atp.slew_rate_limit_rad_s, *args,
+        atp.slew_rate_limit_rad_s,
+        np.ascontiguousarray(sun_hat, dtype=float) if sun_hat is not None else np.zeros((len(t), 3)),
+        sun_hat is not None, bool(atp.require_target_sunlit), float(np.cos(atp.sun_exclusion_rad)),
+        *args,
     )
     return [Window(int(idx[w.debris_index]), w.start, w.stop) for w in find_windows(mask, min_steps)]
 

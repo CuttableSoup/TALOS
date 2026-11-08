@@ -7,8 +7,8 @@ from talos.sweep import RunConfig, run_sweep
 
 def main(days: float, sizes: list[int], horizon_h: float, out: str) -> None:
     cfgs = [
-        RunConfig(name=f"planner_M{m}", planner=True, max_committed=m, horizon_s=horizon_h * 3600.0,
-                  duration_s=days * 86400.0)
+        RunConfig(f"planner_M{m}", overrides={"planner.enabled": True, "planner.max_committed": m,
+                                              "planner.horizon_hours": horizon_h, "run.duration_days": days})
         for m in sizes
     ]
     n = min(len(cfgs), 4)

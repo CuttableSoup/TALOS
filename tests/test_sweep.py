@@ -4,11 +4,12 @@ from talos.sweep import RunConfig, readme_matrix, run_sweep
 
 
 def tiny(name, **kw):
-    return RunConfig(name=name, n_sats=1, n_real=3000, duration_s=900.0, min_lifetime_yr=None, **kw)
+    return RunConfig(name, overrides={"constellation.n_sats": 1, "population.n_real": 3000,
+                                      "run.duration_s": 900.0, "population.min_lifetime_yr": None, **kw})
 
 
 def test_run_sweep_parallel_writes_parquet(tmp_path):
-    cfgs = [tiny("a"), tiny("b", score="dv_per_energy")]
+    cfgs = [tiny("a"), tiny("b", **{"run.score": "dv_per_energy"})]
     df = run_sweep(cfgs, tmp_path, n_jobs=2, threads_per_job=2, progress=False)
     assert list(df["name"]) == ["a", "b"]
     assert {"useful_engagements_per_hr_per_sat", "duty_cycle_mean", "wall_s"} <= set(df.columns)
@@ -18,7 +19,7 @@ def test_run_sweep_parallel_writes_parquet(tmp_path):
 
 
 def test_parallel_equals_serial(tmp_path):
-    cfgs = [tiny("x", seed=3), tiny("y", seed=4)]
+    cfgs = [tiny("x", **{"run.seed": 3}), tiny("y", **{"run.seed": 4})]
     par = run_sweep(cfgs, n_jobs=2, threads_per_job=1, progress=False)
     ser = run_sweep(cfgs, n_jobs=1, threads_per_job=1, progress=False)
     cols = ["useful_engagements", "mean_dv_retro_per_engagement", "removed", "duty_cycle_mean"]

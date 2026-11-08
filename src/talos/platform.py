@@ -48,6 +48,9 @@ class ATPConfig:
     # PLACEHOLDER: retarget + settle + acquisition before each burst. Conservative:
     # counted after target selection, not overlapped with recovery.
     settle_s: float = 5.0
+    # Sun gates (applied only when screening is given sun vectors):
+    require_target_sunlit: bool = True  # passive optical tracking needs a sunlit target
+    sun_exclusion_rad: float = np.deg2rad(30.0)  # LOS must stay this far from the sun (pick; 30-45 typical)
 
 
 @dataclass(frozen=True)
@@ -72,7 +75,9 @@ class ResourceConfig:
     radiator_emissivity: float = 0.90  # Z-93 / AZ-93
     radiator_earth_view: float = 0.22  # per side, panel plane containing nadir, 700-900 km
     earth_ir_w_m2: float = 237.0
-    radiator_other_load_w_m2: float = 5.0  # albedo/sun residual per side (dawn-dusk, edge-on)
+    radiator_other_load_w_m2: float = 5.0  # residual sun leakage per side (edge-on to the sun)
+    radiator_absorptivity: float = 0.20  # Z-93: 0.16 BOL; EOL unsourced (pick)
+    radiator_turndown_min: float = 0.10  # louvers/bypass: min fraction of full rejection
     fin_efficiency: float = 0.85
     radiator_dT_k: float = 8.0  # store -> radiator, pumped two-phase (loop heat pipe: ~20 K)
     # --- thermal store ---

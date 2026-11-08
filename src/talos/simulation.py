@@ -31,6 +31,7 @@ from .screening import screen_windows
 
 if TYPE_CHECKING:
     from .planner import CommitPlanner
+    from .sun import SunEnvironment
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,7 @@ class SimResult:
     lifetime_initial_s: dict[int, float] = field(default_factory=dict)
     lifetime_final_s: dict[int, float] = field(default_factory=dict)
     planner_stats: dict = field(default_factory=dict)
+    env_stats: dict = field(default_factory=dict)  # eclipse / heater / brownout, mean per platform
 
     def records(self) -> list[dict]:
         return [asdict(e) for e in self.events]
@@ -98,6 +100,7 @@ class SimResult:
             "removed_credited_per_yr": len(credited) * YEAR / self.duration_s,
             "debris_years_removed": dyears,
             "debris_years_removed_per_yr": dyears * YEAR / self.duration_s,
+            **self.env_stats,
         }
 
 
@@ -117,23 +120,36 @@ def run_engagements(
     batch: int = 1000,
     score: str = "removal_progress",
     planner: "CommitPlanner | None" = None,
+    env: "SunEnvironment | None" = None,
 ) -> SimResult:
     """Run the engagement loop. With ``planner`` (a CommitPlanner), committed
-    objects take priority and fillers that would block a reservation are skipped."""
+    objects take priority and fillers that would block a reservation are skipped.
+    With ``env`` (a SunEnvironment), platforms follow their illumination timeline
+    (array output, eclipse, albedo) and screening applies the sun gates; without
+    it platforms are always sunlit and the sun gates are off."""
     pop = copy.deepcopy(population)
     removed = np.zeros(len(pop), dtype=bool)
     ready_at = {p.name: 0.0 for p in platforms}
-    state = {p.name: ResourceState(p.resources, p.laser) for p in platforms}
+    if env is None:
+        state = {p.name: ResourceState(p.resources, p.laser) for p in platforms}
+    else:
+        state = {p.name: ResourceState(p.resources, p.laser,
+                                       env=env.timeline(p, duration_s + chunk_s, p.resources.radiator_earth_view),
+                                       fire_in_eclipse=env.cfg.fire_in_eclipse)
+                 for p in platforms}
+    if planner is not None:
+        planner.env = env
     fire_time = {p.name: 0.0 for p in platforms}
     events: list[EngagementEvent] = []
 
     for c0 in np.arange(0.0, duration_s, chunk_s):
         t = c0 + np.arange(0.0, min(chunk_s, duration_s - c0), dt)
         engaged: set[int] = set()
+        sun_hat = env.sun_hat(t) if env is not None else None
         if planner is not None:
             planner.refresh(float(t[0]), pop, removed)
         for p_idx, plat in enumerate(platforms):
-            wins = screen_windows(plat, pop, t, candidates=np.flatnonzero(~removed), batch=batch)
+            wins = screen_windows(plat, pop, t, candidates=np.flatnonzero(~removed), batch=batch, sun_hat=sun_hat)
             if not wins:
                 continue
             k = int(np.searchsorted(t, ready_at[plat.name]))
@@ -209,5 +225,16 @@ def run_engagements(
         B = pop.ballistic_coeff[hit]
         li = dict(zip(hit.tolist(), np.atleast_1d(orbital_lifetime(e0.a, e0.e, B)).tolist()))
         lf = dict(zip(hit.tolist(), np.atleast_1d(orbital_lifetime(e1.a, e1.e, B)).tolist()))
+    env_stats = {}
+    if env is not None:
+        sts = list(state.values())
+        for s in sts:
+            s.advance(max(s.t, duration_s))
+        env_stats = {
+            "eclipse_fraction": float(np.mean([s.env.eclipse_fraction for s in sts])),
+            "heater_kwh_per_day": float(np.mean([s.heater_j for s in sts])) / 3.6e6 * 86400.0 / duration_s,
+            "brownout_s": float(np.mean([s.brownout_s for s in sts])),
+        }
     return SimResult(events, duration_s, [p.name for p in platforms], fire_time, removed, max_duty, pop, li, lf,
-                     dict(planner.stats, committed_now=len(planner.committed)) if planner is not None else {})
+                     dict(planner.stats, committed_now=len(planner.committed)) if planner is not None else {},
+                     env_stats)

@@ -98,8 +98,11 @@ if HAVE_NUMBA:
 
     @nb.njit(parallel=True, cache=True)
     def fine_mask_kernel(t, r_sat, v_sat, rmin, rmax, clear_r, cos_for, slew_max,
+                         sun, use_sun, need_lit, cos_excl,
                          a0, adot, e, inc, raan0, raan_dot, argp0, argp_dot, M0, M_dot):
-        """(T, n) engagement mask: range, Earth-limb LOS, field of regard, slew rate."""
+        """(T, n) engagement mask: range, Earth-limb LOS, field of regard, slew rate and,
+        with ``use_sun``, target sunlit (cylindrical shadow) + sun-exclusion cone.
+        ``sun``: (T, 3) unit vectors (ignored unless use_sun)."""
         T, N = t.shape[0], a0.shape[0]
         mask = np.zeros((T, N), dtype=np.bool_)
         for j in nb.prange(N):
@@ -131,6 +134,14 @@ if HAVE_NUMBA:
                 px, py, pz = sx + s * dx, sy + s * dy, sz + s * dz
                 if math.sqrt(px * px + py * py + pz * pz) <= clear_r:
                     continue
+                if use_sun:
+                    ux, uy, uz = sun[k, 0], sun[k, 1], sun[k, 2]
+                    if (dx * ux + dy * uy + dz * uz) / rho > cos_excl:
+                        continue
+                    if need_lit:
+                        dd = rx * ux + ry * uy + rz * uz
+                        if dd < 0.0 and rx * rx + ry * ry + rz * rz - dd * dd < R_EARTH * R_EARTH:
+                            continue
                 mask[k, j] = True
         return mask
 

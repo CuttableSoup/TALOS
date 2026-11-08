@@ -78,9 +78,13 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
   sieve + fine gates), engagement physics, scheduler (removal-progress scoring,
   batched prediction), lifetime/removal, power/thermal state machine, metrics,
   parallel sweep driver. Population is still a toy sampler (module 1 pending MASTER).
+- Scenario values live in `config/baseline.toml` (units in key suffixes, basis
+  tags [sourced]/[derived]/[pick]/[guess]); `talos.config.load_scenario(path,
+  overrides)` → `run_scenario(sc)`. Sweeps: `RunConfig(name, config=None,
+  overrides={"laser.burst_power_kw": 10, ...})`, `run_sweep(readme_matrix(), "runs/x")`.
 - Run: `pip install -e .[dev]` (+ `numba`, `pyarrow` for speed/parquet), then `pytest`.
   Demo: `python scripts/demo_run.py N SATS HOURS MU`; scheduler comparison:
-  `python scripts/compare_scores.py DAYS`; sweeps: `talos.sweep.run_sweep(readme_matrix(), "runs/x")`.
+  `python scripts/compare_scores.py DAYS`.
 - Engagement/removal counts are NOT weight-scaled (one target per burst);
   run at full density (N = n_real).
 
@@ -117,7 +121,12 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 | Battery | `ResourceConfig` | 2 kWh, 85 % round trip (losses → heat) | capacity guess; cycle life NOT modelled |
 | Bus | `bus_power_w` | 1.5 kW, dissipated into the thermal node | guess |
 | Field of regard | `ATPConfig.field_of_regard_half_angle_rad` | unrestricted | guess |
-| Sunlight | `resources.py` | always sunlit | **wrong Nov–Feb**: ~20 min eclipse/orbit (BRITE flight data) |
+| Epoch / LTAN | `[run] epoch`, `[constellation] ltan_hours` | 2026-12-21, 06:00 | pick: worst-case eclipse (~17 min/orbit at 800 km) |
+| Sun model | `talos/sun.py`, `[sun]` | Almanac ephemeris, conical shadow, 2-axis array, no eclipse firing | physics; pointing + eclipse policy are picks |
+| Target lighting | `[atp] require_target_sunlit` | true (passive optical tracking) | pick |
+| Sun exclusion | `[atp] sun_exclusion_deg` | 30° | pick (30–45 typical, unsourced) |
+| Radiator absorptivity | `radiator_absorptivity` | 0.20 (albedo load) | 0.16 BOL sourced; EOL pick |
+| Radiator turndown | `radiator_turndown_min` | 10 % (louvers) before heaters | pick |
 
 ## Open issues
 - Thermal model (2026-11 research pass) is now a lumped PCM/loop node with T⁴
@@ -131,10 +140,17 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
   Engagement rate is linear in radiator area at ~10 kg/m² (research). **All
   30-day results below used the old 8.5 % thermal model and overstate removals
   at a 20 m² radiator by ~3×.**
+- Sun model (2026-11): 1-day, 4 sats, 100k, 20 m² radiator (engagements/hr/sat):
+  sun off 10.9 · June (no eclipse) 10.8 · December 10.1 (17.6 % eclipse) ·
+  December without the sunlit-target gate 10.1. Eclipse costs ~7 % because
+  the platform is heat-limited and the radiator keeps rejecting in shadow; the
+  sunlit-target gate costs ~5 % Δv/engagement (fewer choices), not rate. No
+  heater energy or brownouts at 1.5 kW bus. A 06:00 LTAN gives the Dec–Jan
+  eclipse season (18:00 → June); eclipse onset is ~2 months either side.
 - Battery cycle life: ~600 bursts/day ≈ 1.1 M cycles in 5 yr at ~30 % DoD and
   ~70C; space Li-ion is tested to ~27–65 k cycles. Not modelled; needs a
   supercapacitor/LTO buffer or a much larger battery. Unsourced.
-- Not modelled: eclipse season, M²/thermal-lens transients at burst start
+- Not modelled: M²/thermal-lens transients at burst start
   (fluence ∝ 1/M⁴), THG crystal detuning (±0.1 K), diode wavelength drift,
   heater power, radiator EOL absorptivity and self-view (−10–30 %).
 - η₁ (mean 0.3) and the 45° thrust angle may double-count: if the sourced η₁ is

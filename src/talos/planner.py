@@ -85,6 +85,7 @@ class CommitPlanner:
         self._cache_t0: float | None = None
         self._cache: list[tuple[np.ndarray, np.ndarray]] = []
         self._cache_len = 0
+        self.env = None  # SunEnvironment, set by run_engagements
         self.stats = {"rescreens": 0, "released": 0, "blocked_fillers": 0, "committed_fired": 0,
                       "committed_declined": 0}
 
@@ -181,13 +182,15 @@ class CommitPlanner:
         t = t_start + np.arange(n) * self.dt
         mean_dv = s.dv_sum / s.hits if s.hits else 0.0
         cand = np.array([j])
+        sun_hat = self.env.sun_hat(t) if self.env is not None else None
         opps: list[Opportunity] = []
         for p_idx, plat in enumerate(self.platforms):
             res, atp = plat.resources, plat.atp
             r_c, v_c = cache[p_idx]
             states = (r_c[i0:i0 + n], v_c[i0:i0 + n])
             step = max(1, int(round(self.probe_s / self.dt)))
-            for w in screen_windows(plat, pop, t, candidates=cand, sat_states=states):
+            for w in screen_windows(plat, pop, t, candidates=cand, sat_states=states,
+                                    sun_hat=sun_hat):
                 last = max(w.start, w.stop - 1 - int(np.ceil((res.min_burst_s + atp.settle_s) / self.dt)))
                 best_k, best_dv = None, -np.inf
                 for k in np.unique(np.append(np.arange(w.start, last + 1, step), last)):

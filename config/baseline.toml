@@ -1,0 +1,110 @@
+# TALOS baseline scenario.
+#
+# Units are SI unless the key's suffix says otherwise; the loader converts
+# suffixed keys to the SI field, e.g. *_deg -> *_rad, *_km -> *_m, *_kw -> *_w,
+# *_kwh -> *_j, *_ft2 -> *_m2, *_hours / *_days -> *_s, *_c -> *_k (deg C -> K).
+# Any key may also be given in its SI form. Unknown keys are an error.
+#
+# Basis tags: [sourced] research pass value; [derived] computed from sourced
+# inputs; [pick] design choice made for this baseline; [guess] placeholder.
+
+[run]
+name = "baseline"
+epoch = 2026-12-21T00:00:00Z   # [pick] winter solstice: worst eclipse for a 06:00 LTAN
+duration_days = 1.0
+seed = 0
+stochastic = true              # sample eta1 / thrust angle / jitter per burst
+score = "removal_progress"     # removal_progress | closest_to_removal | dv_per_energy
+dt_s = 1.0                     # fine screening step
+chunk_s = 600.0                # scheduling chunk; each object engaged at most once per chunk
+
+[constellation]
+n_sats = 4
+altitudes_km = [700.0, 800.0, 900.0]   # round-robin shells, evenly phased in mean anomaly
+ltan_hours = 6.0               # [pick] dawn-dusk, ascending node at 06:00 (eclipse season Nov-Jan)
+
+[population]
+kind = "toy"                   # MASTER sampler not implemented yet
+n_real = 100000                # [guess] Phipps ~100k; band share of MASTER ~1.2M unsourced
+alt_km = [600.0, 1000.0]
+areal_density = 1.0            # kg/m^2 (sweep 0.2, 1, 10)
+min_lifetime_yr = 1.0          # drop objects that re-enter within a year anyway
+
+[planner]
+enabled = false                # receding-horizon commitment planner (did not beat greedy)
+max_committed = 200
+horizon_hours = 6.0
+min_dv_frac = 0.25
+quality = 0.8
+probe_s = 10.0
+
+[laser]
+wavelength_nm = 355.0
+pulse_width_ps = 100.0
+aperture_d_m = 1.5
+m2 = 2.0
+beam_a = 1.27
+prf_hz = 33.0
+burst_power_kw = 25.0          # optical, while firing
+eta2 = 0.40                    # [sourced] backed out of L'ADROIT (sweep 0.3-0.67)
+
+[atp]
+detection_range_km = 800.0
+engage_range_min_km = 100.0
+engage_range_max_km = 500.0
+slew_rate_limit_deg_s = 2.0
+field_of_regard_half_angle_deg = 180.0   # [guess] unrestricted
+earth_clearance_alt_km = 100.0
+jitter_urad = 0.3
+settle_s = 5.0                 # [guess] retarget + acquisition, not overlapped with recovery
+require_target_sunlit = true   # [pick] passive optical tracking of reflected sunlight
+sun_exclusion_deg = 30.0       # [pick] LOS-to-sun keep-out (30-45 typical, unsourced)
+
+[resources]
+# power
+array_area_ft2 = 1600.0
+array_specific_power_w_m2 = 250.0   # EOL [sourced range 200-300]; degradation unsourced
+wallplug_eff = 0.10            # [derived] 0.90 x 0.55 x 0.45 x 0.40; range 0.04-0.17
+bus_power_kw = 1.5             # [guess] dissipated into the thermal node
+battery_capacity_kwh = 2.0     # [guess] cycle life (~1e6 shallow cycles) not modelled
+battery_rt_eff = 0.85          # [sourced, weak] 0.80-0.90; discharge losses become heat
+burst_s = 10.0
+min_burst_s = 5.0              # [guess]
+# radiator: q_net = fin * sides * [eps sigma T^4 - eps F_E IR - alpha albedo - other]
+radiator_area_m2 = 20.0        # [pick] dominant design choice: 20 m2 -> ~2.9 % duty
+radiator_sides = 2
+radiator_emissivity = 0.90     # [sourced] Z-93 / AZ-93
+radiator_absorptivity = 0.20   # [pick] 0.16 BOL; EOL unsourced
+radiator_earth_view = 0.22     # [derived] per side, panel plane containing nadir
+earth_ir_w_m2 = 237.0          # [sourced]
+radiator_other_load_w_m2 = 5.0 # [pick] residual sun leakage, edge-on to the sun
+fin_efficiency = 0.85          # [sourced] 0.8-0.9
+radiator_dT_k = 8.0            # [sourced] store -> radiator, pumped two-phase (LHP ~20 K)
+radiator_turndown_min = 0.10   # [pick] louvers/bypass floor before heaters are needed
+# thermal store (PCM + loop, one lumped node)
+pcm_melt_c = 15.0              # [pick] below a ~20 C diode loop; salt-hydrate class, unsourced
+pcm_mass_kg = 25.0             # [pick] ~1.3 bursts of latent capacity
+pcm_specific_kj_kg = 120.0     # [sourced] system level incl. fins/container (50-170)
+heat_capacity_mj_k = 0.5       # [guess] laser head + loop sensible (0.2-1)
+t_min_c = 10.0                 # [pick] heater floor
+t_max_c = 17.0                 # [pick] stop firing above this
+
+[ablation]
+cm_n_per_mw = 50.0             # [sourced] peak coupling (sweep 25-100)
+threshold_fluence_kj_m2 = 4.5  # [sourced]
+phi_opt_kj_m2 = 8.5            # [sourced]
+cm_model = "plasma"            # plasma | constant
+plasma_exponent = 0.25         # [sourced]
+eta1_mean = 0.3                # [sourced]
+eta1_kappa = 10.0              # [guess] spread
+off_axis_mean_deg = 45.0       # [sourced]
+off_axis_sigma_deg = 15.0      # [guess] spread
+
+[sun]
+enabled = true                 # false: always sunlit, no sun gates
+solar_constant_w_m2 = 1361.0
+albedo = 0.30                  # [sourced] 0.20-0.35
+array_pointing = "two_axis"    # [pick] two_axis | orbit_normal
+fire_in_eclipse = false        # [pick] no firing from battery in shadow
+lit_threshold = 0.5            # penumbra: sunlit when half the disc is visible
+timeline_step_s = 10.0
