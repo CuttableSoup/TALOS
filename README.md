@@ -127,6 +127,9 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 | Sun exclusion | `[atp] sun_exclusion_deg` | 30° | pick (30–45 typical, unsourced) |
 | Detection model | `[atp] detection_model` | passive_optical: Lambertian sphere magnitude, acquire ≤ 16 mag for 10 s, track ≤ 18 mag, +3 mag on sunlit-Earth background | all picks; research needed |
 | Debris albedo | `[population] albedo_median/log_sigma` | 0.1, lognormal σ=0.5 | pick (debris ~0.1–0.2) |
+| Atmosphere | `[atmosphere]` | NRLMSIS 2.1 global mean (Ap 15) vs F10.7; cycle min 70 / max 155, cycle-25 timing | table derived from MSIS; forecast is a pick (use NOAA SWPC) |
+| Background source | `[dynamics] background_frac_per_yr` | 2 % of n_real per year | pick |
+| Breakups | `breakup_rate_per_yr`, `breakup_fragments`, `breakup_dv_sigma_m_s` | 0.5/yr × 2000 fragments, σ 50 m/s per axis | pick (NASA SBM gives ~100 m/s for A/m ~1) |
 | Radiator absorptivity | `radiator_absorptivity` | 0.20 (albedo load) | 0.16 BOL sourced; EOL pick |
 | Radiator turndown | `radiator_turndown_min` | 10 % (louvers) before heaters | pick |
 
@@ -178,6 +181,16 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
   removals toward larger objects (Δv is size-independent at fixed μ). Expect a
   bigger hit at larger radiators / smaller populations, where the platform is
   less target-rich. 1 cm objects are V ≈ 17 at 500 km.
+- Atmosphere + population dynamics (2026-11): drag and lifetimes use a
+  solar-cycle-dependent NRLMSIS 2.1 table (src/talos/data/msis_density.npz,
+  rebuilt by `scripts/build_density_table.py`; MSIS is NRL non-commercial —
+  the table is derived output). Solar max/min density ratio is ~35× at
+  800 km. Every debris object now carries its own epoch, so propagation,
+  engagements and the daily decay step use one consistent drag model (this
+  also fixes post-engagement elements accumulating drag from t = 0). The
+  1-yr lifetime filter now keeps ~69k of 100k toy objects at a Dec-2026
+  epoch (F10.7 ≈ 128). Natural re-entries leave the screening set but are not
+  credited as removals; `net_change_per_yr` = live objects end − start.
 - Battery cycle life: ~600 bursts/day ≈ 1.1 M cycles in 5 yr at ~30 % DoD and
   ~70C; space Li-ion is tested to ~27–65 k cycles. Not modelled; needs a
   supercapacitor/LTO buffer or a much larger battery. Unsourced.
@@ -232,10 +245,12 @@ Likely to change the bottom line:
    orbit-knowledge pointing error yet)*
 2. **Population sources & sinks** — new debris from breakups/launches and
    natural decay of the whole population; needed for net benefit and for
-   meaningful steady-state runs.
+   meaningful steady-state runs. *(first version done: daily whole-population
+   decay + background source + Poisson breakups; rates are picks)*
 3. **Solar-cycle atmosphere** — pymsis with an F10.7/Ap forecast from 2026;
    density varies several-fold over the cycle, shifting lifetimes and the Δv
-   needed for removal.
+   needed for removal. *(done: NRLMSIS 2.1 global-mean table vs F10.7 +
+   parametric cycle-25 forecast; forecast values are picks)*
 4. **Hardware life** — battery cycle life (~1.1 M cycles needed), laser diode
    life by pulse count, UV optics damage/contamination, array degradation:
    removals over the mission, not per year.

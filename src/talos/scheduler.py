@@ -81,7 +81,7 @@ def burst_states(platform: Platform, population: DebrisPopulation, j: int, tp: n
     """Sat position, debris position & velocity at pulse times ``tp`` for object ``j``."""
     r_s, _ = states_at(platform.orbit, tp)
     el = population.elements[j]
-    r_d, v_d = states_at(el, tp, population.ballistic_coeff[j])
+    r_d, v_d = states_at(el, tp, population.ballistic_coeff[j], epoch=population.epoch_s[j])
     return r_s, r_d, v_d
 
 
@@ -122,7 +122,7 @@ def evaluate_candidates(
     active = tp[:, None] < t1[None, :] - 1e-9
     r_s, _ = states_at(platform.orbit, tp)
     sub = population.elements[js]
-    r_d, v_d = states_at(sub, tp, population.ballistic_coeff[js])
+    r_d, v_d = states_at(sub, tp, population.ballistic_coeff[js], epoch=population.epoch_s[js])
     pred = predict_bursts(r_s, r_d, v_d, active, las, population.areal_density[js], params)
     need = dv_to_remove(sub.a, sub.e)
 

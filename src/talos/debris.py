@@ -24,6 +24,7 @@ class DebrisPopulation:
     ids: np.ndarray | None = None
     cd: float = 2.2
     albedo: np.ndarray | float = 0.1  # geometric (Lambertian) albedo, for optical detection
+    epoch_s: np.ndarray | float = 0.0  # sim time [s] each object's elements refer to
 
     def __post_init__(self) -> None:
         n = len(self.elements)
@@ -31,6 +32,7 @@ class DebrisPopulation:
         self.areal_density = np.broadcast_to(np.asarray(self.areal_density, float), (n,)).copy()
         self.weight = np.broadcast_to(np.asarray(self.weight, float), (n,)).copy()
         self.albedo = np.broadcast_to(np.asarray(self.albedo, float), (n,)).copy()
+        self.epoch_s = np.broadcast_to(np.asarray(self.epoch_s, float), (n,)).copy()
         self.ids = np.arange(n) if self.ids is None else np.asarray(self.ids)
         if self.ids.shape != (n,):
             raise ValueError(f"ids shape {self.ids.shape} != ({n},)")
@@ -66,4 +68,15 @@ class DebrisPopulation:
             ids=self.ids[idx],
             cd=self.cd,
             albedo=self.albedo[idx],
+            epoch_s=self.epoch_s[idx],
         )
+
+    def append(self, other: "DebrisPopulation") -> "DebrisPopulation":
+        """New population with ``other``'s objects after this one's (indices preserved)."""
+        cat = lambda f: np.concatenate([getattr(self, f), getattr(other, f)])
+        el = KeplerElements(**{k: np.concatenate([getattr(self.elements, k), getattr(other.elements, k)])
+                               for k in ("a", "e", "i", "raan", "argp", "M")})
+        start = int(self.ids.max()) + 1 if len(self) else 0
+        return DebrisPopulation(elements=el, diameter_m=cat("diameter_m"), areal_density=cat("areal_density"),
+                                weight=cat("weight"), ids=np.concatenate([self.ids, start + np.arange(len(other))]),
+                                cd=self.cd, albedo=cat("albedo"), epoch_s=cat("epoch_s"))

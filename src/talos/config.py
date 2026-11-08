@@ -25,6 +25,8 @@ import numpy as np
 from .constants import FT2_TO_M2
 from .engagement import AblationParams
 from .platform import ATPConfig, LaserConfig, Platform, ResourceConfig, baseline_constellation
+from .atmosphere import Atmosphere, AtmosphereConfig, decimal_year
+from .dynamics import DynamicsConfig, PopulationDynamics
 from .sun import SunConfig, SunEnvironment
 
 DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "config" / "baseline.toml"
@@ -81,6 +83,8 @@ class Scenario:
     resources: ResourceConfig = field(default_factory=ResourceConfig)
     ablation: AblationParams = field(default_factory=AblationParams)
     sun: SunConfig = field(default_factory=SunConfig)
+    atmosphere: AtmosphereConfig = field(default_factory=AtmosphereConfig)
+    dynamics: DynamicsConfig = field(default_factory=DynamicsConfig)
 
 
 # suffix -> (SI suffix, converter); longest suffix wins
@@ -190,9 +194,17 @@ class Built(NamedTuple):
     env: SunEnvironment | None
     planner: Any
     rng: np.random.Generator | None
+    atmosphere: Atmosphere
+    dynamics: PopulationDynamics | None
+
+
+def make_atmosphere(sc: Scenario) -> Atmosphere:
+    return Atmosphere(sc.atmosphere, decimal_year(sc.run.epoch))
 
 
 def build(sc: Scenario) -> Built:
+    """Objects for one run. The population's lifetime filter uses whatever atmosphere
+    is installed; ``run_scenario`` installs the scenario's atmosphere first."""
     from .planner import CommitPlanner
     from .population import toy_population
 
@@ -211,12 +223,22 @@ def build(sc: Scenario) -> Built:
                              dt=sc.run.dt_s, min_dv_frac=pl.min_dv_frac, quality=pl.quality, probe_s=pl.probe_s)
                if pl.enabled else None)
     rng = np.random.default_rng(sc.run.seed + 1) if sc.run.stochastic else None
-    return Built(plats, pop, sc.ablation, env, planner, rng)
+    dyn = (PopulationDynamics(sc.dynamics, p, float(p.n_real) / int(p.n_real), np.random.default_rng(sc.run.seed + 2))
+           if sc.dynamics.enabled else None)
+    return Built(plats, pop, sc.ablation, env, planner, rng, make_atmosphere(sc), dyn)
 
 
 def run_scenario(sc: Scenario):
+    """Install the scenario atmosphere, build, run, restore the previous atmosphere."""
+    from .propagator import get_atmosphere, set_atmosphere
     from .simulation import run_engagements
 
-    b = build(sc)
-    return run_engagements(b.platforms, b.population, sc.run.duration_s, dt=sc.run.dt_s, chunk_s=sc.run.chunk_s,
-                           params=b.params, rng=b.rng, score=sc.run.score, planner=b.planner, env=b.env)
+    prev = get_atmosphere()
+    set_atmosphere(make_atmosphere(sc))
+    try:
+        b = build(sc)
+        return run_engagements(b.platforms, b.population, sc.run.duration_s, dt=sc.run.dt_s,
+                               chunk_s=sc.run.chunk_s, params=b.params, rng=b.rng, score=sc.run.score,
+                               planner=b.planner, env=b.env, dynamics=b.dynamics)
+    finally:
+        set_atmosphere(prev)

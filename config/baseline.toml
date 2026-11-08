@@ -108,6 +108,24 @@ eta1_kappa = 10.0              # [guess] spread
 off_axis_mean_deg = 45.0       # [sourced]
 off_axis_sigma_deg = 15.0      # [guess] spread
 
+[atmosphere]
+model = "msis_table"           # msis_table (NRLMSIS 2.1 global mean vs F10.7) | exponential (static, legacy)
+activity = "cycle"             # cycle | constant
+f107_constant = 130.0          # used when activity = "constant"
+f107_min = 70.0                # [pick] smoothed cycle minimum
+f107_max = 155.0               # [pick] smoothed cycle maximum (cycle 25 ~150-165)
+cycle_min_year = 2019.96       # cycle 25 minimum (Dec 2019)
+cycle_max_year = 2024.8        # cycle 25 smoothed maximum (~Oct 2024)
+cycle_period_yr = 11.0
+
+[dynamics]
+enabled = true                 # natural decay of the whole population + new debris
+update_days = 1.0
+background_frac_per_yr = 0.02  # [pick] new objects/yr as a fraction of n_real
+breakup_rate_per_yr = 0.5      # [pick] breakups/yr in the band
+breakup_fragments = 2000       # [pick] 1-10 cm fragments per breakup
+breakup_dv_sigma_m_s = 50.0    # [pick] per-axis fragment dv spread
+
 [sun]
 enabled = true                 # false: always sunlit, no sun gates
 solar_constant_w_m2 = 1361.0

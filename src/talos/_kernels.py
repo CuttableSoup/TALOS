@@ -198,12 +198,20 @@ if HAVE_NUMBA:
         return mask
 
 
-def element_args(el, ballistic_coeff=None):
-    """Flatten elements + J2/drag rates into the kernel argument tuple."""
+def element_args(el, ballistic_coeff=None, epoch=None):
+    """Flatten elements + J2/drag rates into the kernel argument tuple.
+
+    Kernels evaluate x(t) = x0 + xdot * t at sim time t. Elements referring to sim
+    time ``epoch`` are re-based to t = 0 (x0 = x_ep - xdot * epoch), which is exact
+    for the linear secular model; drag rates use the density at the epoch."""
     from .propagator import drag_da_dt, j2_secular_rates
 
     raan_dot, argp_dot, M_dot = j2_secular_rates(el)
-    a = np.ascontiguousarray(np.atleast_1d(el.a), dtype=float)
-    adot = np.zeros_like(a) if ballistic_coeff is None else np.atleast_1d(drag_da_dt(el.a, ballistic_coeff)) + 0.0 * a
-    f = lambda x: np.ascontiguousarray(np.broadcast_to(np.atleast_1d(x), a.shape), dtype=float)
-    return (a, f(adot), f(el.e), f(el.i), f(el.raan), f(raan_dot), f(el.argp), f(argp_dot), f(el.M), f(M_dot))
+    a_ep = np.atleast_1d(np.asarray(el.a, float))
+    ep = np.zeros_like(a_ep) if epoch is None else np.broadcast_to(np.asarray(epoch, float), a_ep.shape)
+    adot = (np.zeros_like(a_ep) if ballistic_coeff is None
+            else np.broadcast_to(drag_da_dt(a_ep, ballistic_coeff, ep), a_ep.shape))
+    f = lambda x: np.ascontiguousarray(np.broadcast_to(np.atleast_1d(x), a_ep.shape), dtype=float)
+    base = lambda x, xdot: f(np.asarray(x, float) - np.asarray(xdot, float) * ep)
+    return (base(a_ep, adot), f(adot), f(el.e), f(el.i), base(el.raan, raan_dot), f(raan_dot),
+            base(el.argp, argp_dot), f(argp_dot), base(el.M, M_dot), f(M_dot))

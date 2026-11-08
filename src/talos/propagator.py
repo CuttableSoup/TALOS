@@ -71,27 +71,47 @@ def exponential_density(alt_m) -> np.ndarray:
     return rho0 * np.exp(-(h_km - h0) / H)
 
 
-def drag_da_dt(a, ballistic_coeff) -> np.ndarray:
-    """Near-circular orbit-averaged decay rate da/dt [m/s].
+_ATMOSPHERE = None  # talos.atmosphere.Atmosphere; None -> static exponential table
+
+
+def set_atmosphere(atm) -> None:
+    """Install the density model used by drag and lifetime (None: exponential)."""
+    global _ATMOSPHERE
+    _ATMOSPHERE = atm
+
+
+def get_atmosphere():
+    return _ATMOSPHERE
+
+
+def density(alt_m, t_s=0.0) -> np.ndarray:
+    """Density [kg/m^3] from the installed atmosphere; ``t_s`` = s from scenario epoch."""
+    if _ATMOSPHERE is None:
+        return exponential_density(alt_m)
+    return _ATMOSPHERE.density(alt_m, t_s)
+
+
+def drag_da_dt(a, ballistic_coeff, t_s=0.0) -> np.ndarray:
+    """Near-circular orbit-averaged decay rate da/dt [m/s] at time ``t_s``.
 
     ``ballistic_coeff`` is Cd*A/m [m^2/kg] (= Cd / areal density).
     """
     a = np.asarray(a, dtype=float)
-    rho = exponential_density(a - R_EARTH)
+    rho = density(a - R_EARTH, t_s)
     return -rho * np.asarray(ballistic_coeff) * np.sqrt(MU_EARTH * a)
 
 
-def propagate(el: KeplerElements, dt, ballistic_coeff=None) -> KeplerElements:
+def propagate(el: KeplerElements, dt, ballistic_coeff=None, t_epoch=0.0) -> KeplerElements:
     """Advance mean elements by ``dt`` seconds (broadcast against element shape).
 
     J2 rates are evaluated at the initial elements. Drag, if given, decrements
-    ``a`` to first order only.
+    ``a`` to first order only, with density at the element epoch ``t_epoch``.
     """
     dt = np.asarray(dt, dtype=float)
     raan_dot, argp_dot, M_dot = j2_secular_rates(el)
     a = el.a
     if ballistic_coeff is not None:
-        a = np.maximum(a + drag_da_dt(el.a, ballistic_coeff) * dt, R_EARTH)
+        a = np.maximum(a + drag_da_dt(el.a, ballistic_coeff, t_epoch) * dt, R_EARTH)
     return KeplerElements(
         a=a,
         e=el.e,
@@ -105,9 +125,10 @@ def propagate(el: KeplerElements, dt, ballistic_coeff=None) -> KeplerElements:
 _KERNEL_MIN_SIZE = 20_000  # T*N above which the numba kernel beats numpy
 
 
-def states_at(el: KeplerElements, t, ballistic_coeff=None, use_kernel: bool | None = None):
-    """ECI states at times ``t`` [s since epoch], shape ``(len(t),) + el.shape + (3,)``.
+def states_at(el: KeplerElements, t, ballistic_coeff=None, use_kernel: bool | None = None, epoch=None):
+    """ECI states at sim times ``t`` [s], shape ``(len(t),) + el.shape + (3,)``.
 
+    ``epoch`` (scalar or el.shape) is the sim time the elements refer to (default 0).
     Large 1-D element sets use the multithreaded numba kernel when available.
     """
     from . import _kernels
@@ -116,6 +137,7 @@ def states_at(el: KeplerElements, t, ballistic_coeff=None, use_kernel: bool | No
     if use_kernel is None:
         use_kernel = _kernels.HAVE_NUMBA and len(el.shape) == 1 and t.size * el.shape[0] >= _KERNEL_MIN_SIZE
     if use_kernel:
-        return _kernels.states_kernel(t, *_kernels.element_args(el, ballistic_coeff))
+        return _kernels.states_kernel(t, *_kernels.element_args(el, ballistic_coeff, epoch))
     t = t.reshape((-1,) + (1,) * len(el.shape))
-    return elements_to_rv(propagate(el, t, ballistic_coeff))
+    ep = 0.0 if epoch is None else np.asarray(epoch, float)
+    return elements_to_rv(propagate(el, t - ep, ballistic_coeff, ep))

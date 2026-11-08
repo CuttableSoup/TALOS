@@ -210,6 +210,7 @@ def coarse_sieve(
     t: np.ndarray,
     max_range_m: float,
     coarse_step_s: float,
+    epoch=None,
 ) -> np.ndarray:
     """Objects that *may* come within ``max_range_m`` during [t[0], t[-1]].
 
@@ -221,7 +222,7 @@ def coarse_sieve(
     tc = np.linspace(t[0], t[-1], n + 1)
     h = tc[1] - tc[0] if n > 0 else 0.0
     r_s, _ = states_at(sat, tc)
-    r_d, _ = states_at(deb, tc, ballistic_coeff)
+    r_d, _ = states_at(deb, tc, ballistic_coeff, epoch=epoch)
     rho = np.linalg.norm(r_d - r_s[:, None, :], axis=-1)  # (n+1, N)
     vmax = max_speed(sat) + max_speed(deb)
     lower = 0.5 * (rho[:-1] + rho[1:] - vmax * h) if n > 0 else rho
@@ -261,7 +262,7 @@ def screen_windows(
             cols = idx[k : k + 4 * batch]
             keep[k : k + 4 * batch] = coarse_sieve(
                 platform.orbit, population.elements[cols], population.ballistic_coeff[cols],
-                t, rmax, coarse_step_s,
+                t, rmax, coarse_step_s, population.epoch_s[cols],
             )
         idx = idx[keep]
     r_s, v_s = sat_states if sat_states is not None else states_at(platform.orbit, t)
@@ -269,7 +270,7 @@ def screen_windows(
     for k in range(0, len(idx), batch):
         cols = idx[k : k + batch]
         sub = population.subset(cols)
-        r_d, v_d = states_at(sub.elements, t, sub.ballistic_coeff)
+        r_d, v_d = states_at(sub.elements, t, sub.ballistic_coeff, epoch=sub.epoch_s)
         mask = screen_fine(t, r_s, v_s, r_d, v_d, platform.atp, sun_hat, 0.5 * sub.diameter_m, sub.albedo).mask
         out += [Window(int(cols[w.debris_index]), w.start, w.stop) for w in find_windows(mask, min_steps)]
     return out
@@ -285,7 +286,7 @@ def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_
     atp = platform.atp
     rmax = atp.engage_range_max_m
     sub = population.elements[idx]
-    args = _kernels.element_args(sub, population.ballistic_coeff[idx])
+    args = _kernels.element_args(sub, population.ballistic_coeff[idx], population.epoch_s[idx])
     if sat_states is not None:
         r_s, v_s = sat_states
     if coarse_step_s is not None:
@@ -339,7 +340,7 @@ def screen(
     keep = np.flatnonzero(apsis_filter(platform.orbit, population.elements, platform.atp.engage_range_max_m))
     sub = population.subset(keep)
     r_s, v_s = states_at(platform.orbit, t)
-    r_d, v_d = states_at(sub.elements, t, sub.ballistic_coeff)
+    r_d, v_d = states_at(sub.elements, t, sub.ballistic_coeff, epoch=sub.epoch_s)
     res = screen_fine(t, r_s, v_s, r_d, v_d, platform.atp)
     windows = [Window(int(keep[w.debris_index]), w.start, w.stop) for w in find_windows(res.mask, min_steps)]
     return keep, res, windows

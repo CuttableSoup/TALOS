@@ -23,13 +23,15 @@ import numpy as np
 from .constants import R_EARTH, YEAR
 from .debris import DebrisPopulation
 from .engagement import AblationParams, integrate_burst, pulse_times
-from .lifetime import apply_dv, is_removed, move_epoch, orbital_lifetime
+from .lifetime import apply_dv, is_removed, orbital_lifetime
+from .propagator import propagate
 from .platform import Platform
 from .resources import ResourceState
 from .scheduler import burst_states, evaluate_candidates, pick
 from .screening import screen_windows
 
 if TYPE_CHECKING:
+    from .dynamics import PopulationDynamics
     from .planner import CommitPlanner
     from .sun import SunEnvironment
 
@@ -65,6 +67,7 @@ class SimResult:
     lifetime_final_s: dict[int, float] = field(default_factory=dict)
     planner_stats: dict = field(default_factory=dict)
     env_stats: dict = field(default_factory=dict)  # eclipse / heater / brownout, mean per platform
+    pop_stats: dict = field(default_factory=dict)  # sources / sinks (PopulationDynamics)
 
     def records(self) -> list[dict]:
         return [asdict(e) for e in self.events]
@@ -101,6 +104,7 @@ class SimResult:
             "debris_years_removed": dyears,
             "debris_years_removed_per_yr": dyears * YEAR / self.duration_s,
             **self.env_stats,
+            **self.pop_stats,
         }
 
 
@@ -121,14 +125,21 @@ def run_engagements(
     score: str = "removal_progress",
     planner: "CommitPlanner | None" = None,
     env: "SunEnvironment | None" = None,
+    dynamics: "PopulationDynamics | None" = None,
 ) -> SimResult:
     """Run the engagement loop. With ``planner`` (a CommitPlanner), committed
     objects take priority and fillers that would block a reservation are skipped.
     With ``env`` (a SunEnvironment), platforms follow their illumination timeline
     (array output, eclipse, albedo) and screening applies the sun gates; without
-    it platforms are always sunlit and the sun gates are off."""
+    it platforms are always sunlit and the sun gates are off.
+    With ``dynamics`` (a PopulationDynamics), the whole population decays naturally
+    and gains new objects every ``dynamics.cfg.update_s``; naturally decayed
+    objects leave the screening set but are not credited as removals."""
     pop = copy.deepcopy(population)
+    pop0 = copy.deepcopy(population)  # initial state of every object (incl. ones added later)
     removed = np.zeros(len(pop), dtype=bool)
+    decayed = np.zeros(len(pop), dtype=bool)
+    n_initial = len(pop)
     ready_at = {p.name: 0.0 for p in platforms}
     if env is None:
         state = {p.name: ResourceState(p.resources, p.laser) for p in platforms}
@@ -146,10 +157,18 @@ def run_engagements(
         t = c0 + np.arange(0.0, min(chunk_s, duration_s - c0), dt)
         engaged: set[int] = set()
         sun_hat = env.sun_hat(t) if env is not None else None
+        if dynamics is not None and dynamics.due(float(c0)):
+            n_old = len(pop)
+            pop, dmask = dynamics.step(pop, removed | decayed, float(c0))
+            grow = np.zeros(len(pop) - n_old, dtype=bool)
+            removed, decayed = np.concatenate([removed, grow]), np.concatenate([decayed, grow]) | dmask
+            if len(pop) > n_old:
+                pop0 = pop0.append(pop.subset(np.arange(n_old, len(pop))))
         if planner is not None:
-            planner.refresh(float(t[0]), pop, removed)
+            planner.refresh(float(t[0]), pop, removed | decayed)
         for p_idx, plat in enumerate(platforms):
-            wins = screen_windows(plat, pop, t, candidates=np.flatnonzero(~removed), batch=batch, sun_hat=sun_hat)
+            wins = screen_windows(plat, pop, t, candidates=np.flatnonzero(~(removed | decayed)), batch=batch,
+                                  sun_hat=sun_hat)
             if not wins:
                 continue
             k = int(np.searchsorted(t, ready_at[plat.name]))
@@ -195,10 +214,12 @@ def run_engagements(
                     jitter_rad=plat.atp.jitter_rad if rng is not None else 0.0, rng=rng,
                 )
                 tm = 0.5 * (best.t_start + best.t_stop)
-                el_tm = move_epoch(pop.elements[j], tm)
+                ep = float(pop.epoch_s[j])
+                el_tm = propagate(pop.elements[j], tm - ep, pop.ballistic_coeff[j], ep)
                 el_new = apply_dv(el_tm, res.dv_vec)
-                gone = bool(is_removed(el_new, pop.ballistic_coeff[j]))
-                _write_elements(pop, j, move_epoch(el_new, -tm))
+                gone = bool(is_removed(el_new, pop.ballistic_coeff[j], tm))
+                _write_elements(pop, j, el_new)
+                pop.epoch_s[j] = tm
                 removed[j] |= gone
                 engaged.add(j)
                 if planner is not None:
@@ -221,10 +242,12 @@ def run_engagements(
     hit = np.array(sorted({e.debris_index for e in events}), dtype=int)
     li, lf = {}, {}
     if len(hit):
-        e0, e1 = population.elements[hit], pop.elements[hit]
+        # both lifetimes measured from each object's initial epoch
+        e0, e1 = pop0.elements[hit], pop.elements[hit]
         B = pop.ballistic_coeff[hit]
-        li = dict(zip(hit.tolist(), np.atleast_1d(orbital_lifetime(e0.a, e0.e, B)).tolist()))
-        lf = dict(zip(hit.tolist(), np.atleast_1d(orbital_lifetime(e1.a, e1.e, B)).tolist()))
+        t0, t1 = pop0.epoch_s[hit], pop.epoch_s[hit]
+        li = dict(zip(hit.tolist(), np.atleast_1d(orbital_lifetime(e0.a, e0.e, B, t0_s=t0)).tolist()))
+        lf = dict(zip(hit.tolist(), (np.atleast_1d(orbital_lifetime(e1.a, e1.e, B, t0_s=t1)) + t1 - t0).tolist()))
     env_stats = {}
     if env is not None:
         sts = list(state.values())
@@ -235,6 +258,16 @@ def run_engagements(
             "heater_kwh_per_day": float(np.mean([s.heater_j for s in sts])) / 3.6e6 * 86400.0 / duration_s,
             "brownout_s": float(np.mean([s.brownout_s for s in sts])),
         }
+    pop_stats = {}
+    if dynamics is not None:
+        live = int((~(removed | decayed)).sum())
+        pop_stats = {
+            **dynamics.stats,
+            "pop_initial": n_initial,
+            "pop_final_live": live,
+            "net_change_per_yr": (live - n_initial) * YEAR / duration_s,
+            "natural_decays_per_yr": dynamics.stats["natural_decays"] * YEAR / duration_s,
+        }
     return SimResult(events, duration_s, [p.name for p in platforms], fire_time, removed, max_duty, pop, li, lf,
                      dict(planner.stats, committed_now=len(planner.committed)) if planner is not None else {},
-                     env_stats)
+                     env_stats, pop_stats)
