@@ -51,6 +51,15 @@ class ATPConfig:
     # Sun gates (applied only when screening is given sun vectors):
     require_target_sunlit: bool = True  # passive optical tracking needs a sunlit target
     sun_exclusion_rad: float = np.deg2rad(30.0)  # LOS must stay this far from the sun (pick; 30-45 typical)
+    # Detection & tracking (applied with sun vectors). "passive_optical": a wide-field
+    # acquisition sensor detects sunlit targets brighter than detect_mag_limit; after
+    # acquisition_s of continuous detection a track exists, held by the 1.5 m optics down
+    # to track_mag_limit. "ideal": every geometric window is engageable (old behaviour).
+    detection_model: str = "passive_optical"
+    detect_mag_limit: float = 16.0  # PICK: wide-field acquisition, streaking targets
+    track_mag_limit: float = 18.0  # PICK: 1.5 m aperture, closed-loop
+    earth_background_penalty_mag: float = 3.0  # PICK: sunlit Earth behind the target
+    acquisition_s: float = 10.0  # PICK: detection -> track/orbit established
 
 
 @dataclass(frozen=True)

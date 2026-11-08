@@ -29,6 +29,8 @@ n_real = 100000                # [guess] Phipps ~100k; band share of MASTER ~1.2
 alt_km = [600.0, 1000.0]
 areal_density = 1.0            # kg/m^2 (sweep 0.2, 1, 10)
 min_lifetime_yr = 1.0          # drop objects that re-enter within a year anyway
+albedo_median = 0.1            # [pick] Lambertian geometric albedo (debris ~0.1-0.2)
+albedo_log_sigma = 0.5         # [pick] lognormal spread per object, clipped 0.02-0.6
 
 [planner]
 enabled = false                # receding-horizon commitment planner (did not beat greedy)
@@ -59,6 +61,12 @@ jitter_urad = 0.3
 settle_s = 5.0                 # [guess] retarget + acquisition, not overlapped with recovery
 require_target_sunlit = true   # [pick] passive optical tracking of reflected sunlight
 sun_exclusion_deg = 30.0       # [pick] LOS-to-sun keep-out (30-45 typical, unsourced)
+# detection & tracking (applied when [sun] is enabled)
+detection_model = "passive_optical"  # passive_optical | ideal (every geometric window engageable)
+detect_mag_limit = 16.0        # [pick] wide-field acquisition sensor, streaking targets
+track_mag_limit = 18.0         # [pick] 1.5 m aperture closed-loop track
+earth_background_penalty_mag = 3.0   # [pick] sunlit Earth behind the target
+acquisition_s = 10.0           # [pick] continuous detection needed before a track exists
 
 [resources]
 # power

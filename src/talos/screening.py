@@ -60,10 +60,62 @@ class ScreenResult:
     in_for: np.ndarray
     slew_ok: np.ndarray
     sun_ok: np.ndarray | bool = True  # target sunlit and LOS outside the sun-exclusion cone
+    tracked: np.ndarray | bool = True  # detection/track state machine (passive optical)
 
     @property
     def mask(self) -> np.ndarray:
-        return self.in_range & self.los_ok & self.in_for & self.slew_ok & self.sun_ok
+        return self.in_range & self.los_ok & self.in_for & self.slew_ok & self.sun_ok & self.tracked
+
+
+MAG_SUN = -26.74
+
+
+def apparent_magnitude(r_sat, r_deb, sun_hat, radius, albedo, bg_penalty_mag=0.0) -> np.ndarray:
+    """V magnitude of a Lambertian sphere (radius, geometric albedo) seen from r_sat.
+
+    flux / flux_sun = (2 / 3pi) p r^2 / rho^2 [(pi - a) cos a + sin a], a = phase angle.
+    Adds ``bg_penalty_mag`` where the line of sight continues onto the sunlit Earth.
+    Shapes: r_sat (T, 1, 3), r_deb (T, N, 3), sun_hat (T, 1, 3), radius/albedo (N,).
+    """
+    d = r_deb - r_sat
+    d2 = np.sum(d * d, -1)
+    rho = np.sqrt(d2)
+    cosa = np.clip(-np.sum(d * sun_hat, -1) / rho, -1.0, 1.0)
+    al = np.arccos(cosa)
+    phase = (np.pi - al) * cosa + np.sin(al)
+    flux = (2.0 / (3.0 * np.pi)) * albedo * radius ** 2 / d2 * phase
+    mag = MAG_SUN - 2.5 * np.log10(np.maximum(flux, 1e-300))
+    if bg_penalty_mag:
+        b = np.sum(r_sat * d, -1)
+        c = np.sum(r_sat * r_sat, -1) - R_EARTH ** 2
+        disc = b * b - d2 * c
+        s1 = (-b - np.sqrt(np.maximum(disc, 0.0))) / d2
+        hit = r_sat + s1[..., None] * d
+        bg = (disc > 0) & (s1 > 1.0) & (np.sum(hit * sun_hat, -1) > 0)
+        mag = mag + bg_penalty_mag * bg
+    return mag
+
+
+def track_mask(visible, mag, atp: ATPConfig, dt: float) -> np.ndarray:
+    """(T, N) track state: detect (mag <= detect limit) for acquisition_s consecutive
+    seconds to start a track, keep it while mag <= track limit. A target detectable at
+    the first step is treated as already tracked. Mirrors fine_mask_kernel."""
+    acq = max(1, int(np.ceil(atp.acquisition_s / dt - 1e-9)))
+    det = visible & (mag <= atp.detect_mag_limit)
+    trk = visible & (mag <= atp.track_mag_limit)
+    T, N = det.shape
+    out = np.zeros((T, N), dtype=bool)
+    tracked = np.zeros(N, dtype=bool)
+    run = np.zeros(N, dtype=int)
+    for k in range(T):
+        lost = tracked & ~trk[k]
+        tracked &= ~lost
+        run[lost] = 0
+        nt = ~tracked
+        run[nt] = np.where(det[k, nt], acq if k == 0 else run[nt] + 1, 0)
+        tracked |= nt & (run >= acq)
+        out[k] = tracked
+    return out
 
 
 def sun_gate(r_rel, rng, r_deb, sun_hat, atp: ATPConfig) -> np.ndarray:
@@ -78,22 +130,42 @@ def sun_gate(r_rel, rng, r_deb, sun_hat, atp: ATPConfig) -> np.ndarray:
     return ok
 
 
-def screen_fine(t, r_sat, v_sat, r_deb, v_deb, atp: ATPConfig, sun_hat=None) -> ScreenResult:
+def screen_fine(t, r_sat, v_sat, r_deb, v_deb, atp: ATPConfig, sun_hat=None, radius=None,
+                albedo=None) -> ScreenResult:
     """Gate checks. ``r_sat``/``v_sat``: (T, 3); ``r_deb``/``v_deb``: (T, N, 3);
-    ``sun_hat``: optional (T, 3) sun unit vectors enabling the sun gates."""
+    ``sun_hat``: optional (T, 3) sun unit vectors enabling the sun gates and, with
+    ``atp.detection_model == "passive_optical"``, the detection/track model (needs
+    per-object ``radius`` and ``albedo``)."""
+    from .sun import target_lit
+
     r_sat = r_sat[:, None, :]
     v_sat = v_sat[:, None, :]
     r_rel = r_deb - r_sat
     v_rel = v_deb - v_sat
     rng = np.linalg.norm(r_rel, axis=-1)
     slew = los_angular_rate(r_rel, v_rel)
+    los_ok = los_clear(r_sat, r_deb, R_EARTH + atp.earth_clearance_alt_m)
+    tracked = True
+    if sun_hat is not None and atp.detection_model == "passive_optical":
+        if radius is None or albedo is None:
+            raise ValueError("passive_optical detection needs radius and albedo")
+        s = sun_hat[:, None, :]
+        visible = (los_ok & (rng <= atp.detection_range_m) & target_lit(r_deb, s)
+                   & (np.sum(r_rel * s, -1) / rng <= np.cos(atp.sun_exclusion_rad)))
+        mag = apparent_magnitude(r_sat, r_deb, s, np.asarray(radius), np.asarray(albedo),
+                                 atp.earth_background_penalty_mag)
+        dt = float(t[1] - t[0]) if len(t) > 1 else 1.0
+        tracked = track_mask(visible, mag, atp, dt)
+    elif atp.detection_model not in ("passive_optical", "ideal"):
+        raise ValueError(f"unknown detection_model {atp.detection_model!r}")
     return ScreenResult(
         sun_ok=True if sun_hat is None else sun_gate(r_rel, rng, r_deb, sun_hat, atp),
+        tracked=tracked,
         t=np.asarray(t),
         range_m=rng,
         slew_rate=slew,
         in_range=(rng >= atp.engage_range_min_m) & (rng <= atp.engage_range_max_m),
-        los_ok=los_clear(r_sat, r_deb, R_EARTH + atp.earth_clearance_alt_m),
+        los_ok=los_ok,
         in_for=off_boresight_angle(r_rel, v_sat) <= atp.field_of_regard_half_angle_rad,
         slew_ok=slew <= atp.slew_rate_limit_rad_s,
     )
@@ -198,7 +270,7 @@ def screen_windows(
         cols = idx[k : k + batch]
         sub = population.subset(cols)
         r_d, v_d = states_at(sub.elements, t, sub.ballistic_coeff)
-        mask = screen_fine(t, r_s, v_s, r_d, v_d, platform.atp, sun_hat).mask
+        mask = screen_fine(t, r_s, v_s, r_d, v_d, platform.atp, sun_hat, 0.5 * sub.diameter_m, sub.albedo).mask
         out += [Window(int(cols[w.debris_index]), w.start, w.stop) for w in find_windows(mask, min_steps)]
     return out
 
@@ -242,6 +314,11 @@ def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_
         atp.slew_rate_limit_rad_s,
         np.ascontiguousarray(sun_hat, dtype=float) if sun_hat is not None else np.zeros((len(t), 3)),
         sun_hat is not None, bool(atp.require_target_sunlit), float(np.cos(atp.sun_exclusion_rad)),
+        bool(sun_hat is not None and atp.detection_model == "passive_optical"), float(atp.detection_range_m),
+        float(atp.detect_mag_limit), float(atp.track_mag_limit), float(atp.earth_background_penalty_mag),
+        max(1, int(np.ceil(atp.acquisition_s / (t[1] - t[0]) - 1e-9))),
+        np.ascontiguousarray(0.5 * population.diameter_m[idx], dtype=float),
+        np.ascontiguousarray(population.albedo[idx], dtype=float),
         *args,
     )
     return [Window(int(idx[w.debris_index]), w.start, w.stop) for w in find_windows(mask, min_steps)]

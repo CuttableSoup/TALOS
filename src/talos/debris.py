@@ -23,12 +23,14 @@ class DebrisPopulation:
     weight: np.ndarray
     ids: np.ndarray | None = None
     cd: float = 2.2
+    albedo: np.ndarray | float = 0.1  # geometric (Lambertian) albedo, for optical detection
 
     def __post_init__(self) -> None:
         n = len(self.elements)
         self.diameter_m = np.broadcast_to(np.asarray(self.diameter_m, float), (n,)).copy()
         self.areal_density = np.broadcast_to(np.asarray(self.areal_density, float), (n,)).copy()
         self.weight = np.broadcast_to(np.asarray(self.weight, float), (n,)).copy()
+        self.albedo = np.broadcast_to(np.asarray(self.albedo, float), (n,)).copy()
         self.ids = np.arange(n) if self.ids is None else np.asarray(self.ids)
         if self.ids.shape != (n,):
             raise ValueError(f"ids shape {self.ids.shape} != ({n},)")
@@ -63,4 +65,5 @@ class DebrisPopulation:
             weight=self.weight[idx],
             ids=self.ids[idx],
             cd=self.cd,
+            albedo=self.albedo[idx],
         )

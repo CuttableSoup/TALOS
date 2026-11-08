@@ -22,6 +22,8 @@ def toy_population(
     n_real: float = 1.0e5,  # Phipps' ~100k; MASTER all-LEO 1-10 cm is ~1.2M, band share unsourced
     areal_density: float = 1.0,
     min_lifetime_yr: float | None = None,
+    albedo_median: float = 0.1,
+    albedo_log_sigma: float = 0.5,
 ) -> DebrisPopulation:
     """Uniform-in-altitude, near-circular, isotropic-ish population. Not physical.
 
@@ -44,6 +46,8 @@ def toy_population(
         areal_density=areal_density,
         weight=n_real / n,
     )
+    # drawn last so earlier draws (and existing seeds) are unchanged
+    pop.albedo = np.clip(albedo_median * np.exp(albedo_log_sigma * rng.standard_normal(n)), 0.02, 0.6)
     if min_lifetime_yr is not None:
         life = orbital_lifetime(el.a, el.e, pop.ballistic_coeff, max_s=2 * min_lifetime_yr * YEAR)
         pop = pop.subset(np.flatnonzero(life > min_lifetime_yr * YEAR))

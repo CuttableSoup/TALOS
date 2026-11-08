@@ -56,6 +56,8 @@ class PopulationConfig:
     alt_km: tuple[float, float] = (600.0, 1000.0)
     areal_density: float = 1.0
     min_lifetime_yr: float | None = 1.0
+    albedo_median: float = 0.1
+    albedo_log_sigma: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -202,7 +204,8 @@ def build(sc: Scenario) -> Built:
     if p.kind != "toy":
         raise NotImplementedError(f"population kind {p.kind!r}")
     pop = toy_population(int(p.n_real), np.random.default_rng(sc.run.seed), alt_km=p.alt_km, n_real=p.n_real,
-                         areal_density=p.areal_density, min_lifetime_yr=p.min_lifetime_yr)
+                         areal_density=p.areal_density, min_lifetime_yr=p.min_lifetime_yr,
+                         albedo_median=p.albedo_median, albedo_log_sigma=p.albedo_log_sigma)
     pl = sc.planner
     planner = (CommitPlanner(plats, sc.ablation, max_committed=pl.max_committed, horizon_s=pl.horizon_s,
                              dt=sc.run.dt_s, min_dv_frac=pl.min_dv_frac, quality=pl.quality, probe_s=pl.probe_s)

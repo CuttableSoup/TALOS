@@ -125,6 +125,8 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 | Sun model | `talos/sun.py`, `[sun]` | Almanac ephemeris, conical shadow, 2-axis array, no eclipse firing | physics; pointing + eclipse policy are picks |
 | Target lighting | `[atp] require_target_sunlit` | true (passive optical tracking) | pick |
 | Sun exclusion | `[atp] sun_exclusion_deg` | 30° | pick (30–45 typical, unsourced) |
+| Detection model | `[atp] detection_model` | passive_optical: Lambertian sphere magnitude, acquire ≤ 16 mag for 10 s, track ≤ 18 mag, +3 mag on sunlit-Earth background | all picks; research needed |
+| Debris albedo | `[population] albedo_median/log_sigma` | 0.1, lognormal σ=0.5 | pick (debris ~0.1–0.2) |
 | Radiator absorptivity | `radiator_absorptivity` | 0.20 (albedo load) | 0.16 BOL sourced; EOL pick |
 | Radiator turndown | `radiator_turndown_min` | 10 % (louvers) before heaters | pick |
 
@@ -160,6 +162,22 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
   removes 776 vs 942: eclipse (15.6 %) and the sun gates cost ~18 %. Removal
   rate still climbing at day 30 at every area. Heaters draw 0.3–2.8 kWh/day
   at 40–60 m² (bigger radiator overcools in eclipse); no brownouts.
+- Detection & tracking (2026-11, picks): a target is engageable only after
+  10 s of continuous detection (sunlit, outside sun exclusion, ≤ 800 km,
+  V ≤ 16 incl. +3 mag on a sunlit-Earth background), and stays so while
+  V ≤ 18. A target detectable at a chunk start is assumed already tracked.
+  1-day, 4 sats, 100k, 20 m² (runs/detection_1d):
+  | sensor (detect/track) | eng/hr/sat | Δv/eng | median target | < 3 cm |
+  |---|---|---|---|---|
+  | ideal | 10.1 | 9.18 | 2.9 cm | 51 % |
+  | 18/20 mag | 10.2 | 9.32 | 3.1 cm | 49 % |
+  | 16/18 (baseline) | 10.2 | 8.73 | 3.9 cm | 40 % |
+  | 14/16 | 9.9 | 7.06 | 5.4 cm | 20 % |
+  Rate is unchanged because the heat-limited platform still has many targets
+  to choose from; detection costs Δv/engagement (fewer choices) and shifts
+  removals toward larger objects (Δv is size-independent at fixed μ). Expect a
+  bigger hit at larger radiators / smaller populations, where the platform is
+  less target-rich. 1 cm objects are V ≈ 17 at 500 km.
 - Battery cycle life: ~600 bursts/day ≈ 1.1 M cycles in 5 yr at ~30 % DoD and
   ~70C; space Li-ion is tested to ~27–65 k cycles. Not modelled; needs a
   supercapacitor/LTO buffer or a much larger battery. Unsourced.
@@ -205,6 +223,40 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 - `debris_years_removed` is dominated by small Δv on very long-lived (μ=10)
   objects and depends on the 200-yr cap
 
+## Roadmap: elements still to add (besides ORDEM / DAS, pending approval)
+Likely to change the bottom line:
+1. **Detection & tracking** — onboard detection probability vs size, range,
+   phase angle and background; acquisition time; track loss. The sim used to
+   assume perfect knowledge of every object. *(first version done: passive
+   optical, see Open issues; detection probability is a hard threshold, no
+   orbit-knowledge pointing error yet)*
+2. **Population sources & sinks** — new debris from breakups/launches and
+   natural decay of the whole population; needed for net benefit and for
+   meaningful steady-state runs.
+3. **Solar-cycle atmosphere** — pymsis with an F10.7/Ap forecast from 2026;
+   density varies several-fold over the cycle, shifting lifetimes and the Δv
+   needed for removal.
+4. **Hardware life** — battery cycle life (~1.1 M cycles needed), laser diode
+   life by pulse count, UV optics damage/contamination, array degradation:
+   removals over the mission, not per year.
+5. **Mass & cost model** — radiator (~10 kg/m²), PCM, arrays, battery, laser →
+   launch cost → cost per removal.
+
+Worth adding:
+6. **Risk transfer & safety** — time lowered debris spends crossing ISS /
+   Starlink shells; keep-out for active satellites.
+7. **Uncertainty propagation** — Latin-hypercube over η₂, Cm, wall-plug, η₁,
+   sun exclusion, etc., for confidence bands.
+8. **Attitude / slew dynamics** — reaction-wheel torque and momentum for a
+   1.5 m beam director, replacing the 5 s settle guess.
+9. **Material-dependent coupling** — Al vs MLI vs paint vs composite;
+   fragmentation risk from ablation.
+10. **Constellation coordination** — cross-platform hand-off, avoiding
+    duplicate shots.
+
+Validation still owed: gate 2 (Pieters & Noomen reproduction), gate 5
+(orekit / STELA). MASTER also needs ESA SDUP registration.
+
 ## Next step
-Longer runs / steady-state detection; MASTER population (module 1). Optionally
-re-test the planner at μ=0.2 and with fewer sats.
+Detection & tracking (roadmap 1); longer runs / steady-state; MASTER population
+(module 1).

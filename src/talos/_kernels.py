@@ -29,6 +29,7 @@ except ImportError:  # pragma: no cover
     HAVE_NUMBA = False
 
 TWO_PI = 2.0 * math.pi
+MAG_SUN = -26.74  # apparent V magnitude of the sun at 1 AU
 
 if HAVE_NUMBA:
 
@@ -96,16 +97,44 @@ if HAVE_NUMBA:
                 prev = rho
         return keep
 
+    @nb.njit(cache=True, inline="always")
+    def _app_mag(sx, sy, sz, dx, dy, dz, d2, rho, ux, uy, uz, radius, albedo, bg_pen):
+        """Apparent magnitude of a Lambertian sphere seen from the platform, plus the
+        Earth-background penalty when the sunlit Earth lies behind the target."""
+        cosa = -(dx * ux + dy * uy + dz * uz) / rho  # phase angle sun-target-observer
+        cosa = -1.0 if cosa < -1.0 else (1.0 if cosa > 1.0 else cosa)
+        al = math.acos(cosa)
+        phase = (math.pi - al) * cosa + math.sin(al)
+        flux = (2.0 / (3.0 * math.pi)) * albedo * radius * radius / d2 * phase
+        mag = MAG_SUN - 2.5 * math.log10(flux if flux > 1e-300 else 1e-300)
+        # ray sat + s*d, s > 1: does it hit Earth, and is that point sunlit?
+        b = sx * dx + sy * dy + sz * dz
+        c = sx * sx + sy * sy + sz * sz - R_EARTH * R_EARTH
+        disc = b * b - d2 * c
+        if disc > 0.0:
+            s1 = (-b - math.sqrt(disc)) / d2
+            if s1 > 1.0:
+                if (sx + s1 * dx) * ux + (sy + s1 * dy) * uy + (sz + s1 * dz) * uz > 0.0:
+                    mag += bg_pen
+        return mag
+
     @nb.njit(parallel=True, cache=True)
     def fine_mask_kernel(t, r_sat, v_sat, rmin, rmax, clear_r, cos_for, slew_max,
                          sun, use_sun, need_lit, cos_excl,
+                         use_det, det_range, det_lim, trk_lim, bg_pen, acq_steps, radius, albedo,
                          a0, adot, e, inc, raan0, raan_dot, argp0, argp_dot, M0, M_dot):
         """(T, n) engagement mask: range, Earth-limb LOS, field of regard, slew rate and,
         with ``use_sun``, target sunlit (cylindrical shadow) + sun-exclusion cone.
+        With ``use_det`` (requires use_sun) a per-object detection/track state machine
+        runs along time: detect (mag <= det_lim) for ``acq_steps`` consecutive steps to
+        establish a track, keep it while mag <= trk_lim; engagement requires a track.
+        A target detectable at the first step is assumed already tracked (chunk start).
         ``sun``: (T, 3) unit vectors (ignored unless use_sun)."""
         T, N = t.shape[0], a0.shape[0]
         mask = np.zeros((T, N), dtype=np.bool_)
         for j in nb.prange(N):
+            tracked = False
+            run = 0
             for k in range(T):
                 a, O, w, M = _elem_at(j, t[k], a0, adot, raan0, raan_dot, argp0, argp_dot, M0, M_dot)
                 rx, ry, rz, vx, vy, vz = _rv(a, e[j], inc[j], O, w, M)
@@ -113,7 +142,44 @@ if HAVE_NUMBA:
                 dx, dy, dz = rx - sx, ry - sy, rz - sz
                 d2 = dx * dx + dy * dy + dz * dz
                 rho = math.sqrt(d2)
-                if rho < rmin or rho > rmax:
+                far = rho > (det_range if use_det else rmax)
+                if far:
+                    tracked = False
+                    run = 0
+                    continue
+                # Earth-limb clearance of the segment sat -> target
+                s = -(sx * dx + sy * dy + sz * dz) / d2
+                s = 0.0 if s < 0.0 else (1.0 if s > 1.0 else s)
+                px, py, pz = sx + s * dx, sy + s * dy, sz + s * dz
+                los_ok = math.sqrt(px * px + py * py + pz * pz) > clear_r
+                excl = False
+                lit = True
+                qx, qy, qz = 0.0, 0.0, 0.0
+                if use_sun:
+                    qx, qy, qz = sun[k, 0], sun[k, 1], sun[k, 2]
+                    excl = (dx * qx + dy * qy + dz * qz) / rho > cos_excl
+                    dd = rx * qx + ry * qy + rz * qz
+                    lit = not (dd < 0.0 and rx * rx + ry * ry + rz * rz - dd * dd < R_EARTH * R_EARTH)
+                if use_det:
+                    det_ok = False
+                    trk_ok = False
+                    if los_ok and lit and not excl:
+                        mag = _app_mag(sx, sy, sz, dx, dy, dz, d2, rho, qx, qy, qz, radius[j], albedo[j], bg_pen)
+                        det_ok = mag <= det_lim
+                        trk_ok = mag <= trk_lim
+                    if tracked and not trk_ok:
+                        tracked = False
+                        run = 0
+                    if not tracked:
+                        if det_ok:
+                            run = acq_steps if k == 0 else run + 1
+                        else:
+                            run = 0
+                        if run >= acq_steps:
+                            tracked = True
+                    if not tracked:
+                        continue
+                if rho < rmin or rho > rmax or not los_ok or excl or (need_lit and not lit):
                     continue
                 ux, uy, uz = v_sat[k, 0], v_sat[k, 1], v_sat[k, 2]
                 # field of regard about the ram direction
@@ -128,20 +194,6 @@ if HAVE_NUMBA:
                 cz = dx * wy - dy * wx
                 if math.sqrt(cx * cx + cy * cy + cz * cz) / d2 > slew_max:
                     continue
-                # Earth-limb clearance of the segment sat -> target
-                s = -(sx * dx + sy * dy + sz * dz) / d2
-                s = 0.0 if s < 0.0 else (1.0 if s > 1.0 else s)
-                px, py, pz = sx + s * dx, sy + s * dy, sz + s * dz
-                if math.sqrt(px * px + py * py + pz * pz) <= clear_r:
-                    continue
-                if use_sun:
-                    ux, uy, uz = sun[k, 0], sun[k, 1], sun[k, 2]
-                    if (dx * ux + dy * uy + dz * uz) / rho > cos_excl:
-                        continue
-                    if need_lit:
-                        dd = rx * ux + ry * uy + rz * uz
-                        if dd < 0.0 and rx * rx + ry * ry + rz * rz - dd * dd < R_EARTH * R_EARTH:
-                            continue
                 mask[k, j] = True
         return mask
 
