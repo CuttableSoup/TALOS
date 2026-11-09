@@ -126,6 +126,7 @@ def run_engagements(
     planner: "CommitPlanner | None" = None,
     env: "SunEnvironment | None" = None,
     dynamics: "PopulationDynamics | None" = None,
+    on_chunk=None,
 ) -> SimResult:
     """Run the engagement loop. With ``planner`` (a CommitPlanner), committed
     objects take priority and fillers that would block a reservation are skipped.
@@ -134,7 +135,9 @@ def run_engagements(
     it platforms are always sunlit and the sun gates are off.
     With ``dynamics`` (a PopulationDynamics), the whole population decays naturally
     and gains new objects every ``dynamics.cfg.update_s``; naturally decayed
-    objects leave the screening set but are not credited as removals."""
+    objects leave the screening set but are not credited as removals.
+    ``on_chunk(t_s, events, removed, decayed)`` is called after every chunk (progress
+    logging / event checkpoints); it must not modify its arguments."""
     pop = copy.deepcopy(population)
     pop0 = copy.deepcopy(population)  # initial state of every object (incl. ones added later)
     removed = np.zeros(len(pop), dtype=bool)
@@ -237,6 +240,8 @@ def run_engagements(
                     perigee_alt_after_m=float(el_new.rp - R_EARTH), removed=gone, committed=is_commit,
                 ))
                 k = int(np.searchsorted(t, ready_at[plat.name]))
+        if on_chunk is not None:
+            on_chunk(float(min(c0 + chunk_s, duration_s)), events, removed, decayed)
 
     max_duty = float(np.mean([s.steady_state_max_duty() for s in state.values()]))
     hit = np.array(sorted({e.debris_index for e in events}), dtype=int)

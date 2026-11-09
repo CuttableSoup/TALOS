@@ -7,6 +7,11 @@ every logical core: n_jobs * threads_per_job = os.cpu_count().
 Outputs (in ``out_dir``):
   * summary.parquet: one row per run (config + SimResult.summary()).
   * events/<name>.parquet: per-engagement event log for playback/analysis.
+  * logs/<name>.log: one progress line per ``log_every_s`` of sim time (sim day,
+    wall time, engagements, removals, live population), written while the run goes.
+  * events/<name>.partial.parquet: event checkpoint every ``checkpoint_s`` of sim
+    time, so a long run can be inspected (or salvaged) before it finishes; removed
+    once the final events file is written.
 """
 
 from __future__ import annotations
@@ -15,11 +20,12 @@ import itertools
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
 from .config import Scenario, load_scenario, run_scenario
+from .constants import DAY
 
 
 @dataclass(frozen=True)
@@ -35,11 +41,48 @@ class RunConfig:
         return load_scenario(self.config, {"run.name": self.name, **self.overrides})
 
 
-def run_one(cfg: RunConfig) -> tuple[dict, list[dict]]:
-    """Build and run ``cfg``'s scenario; return (summary row, events)."""
+class RunMonitor:
+    """``on_chunk`` hook: progress log lines and periodic event checkpoints for one run."""
+
+    def __init__(self, name: str, out_dir: str | os.PathLike, duration_s: float,
+                 log_every_s: float = DAY, checkpoint_s: float = 7 * DAY):
+        out = Path(out_dir)
+        (out / "logs").mkdir(parents=True, exist_ok=True)
+        (out / "events").mkdir(parents=True, exist_ok=True)
+        self.name, self.duration_s = name, duration_s
+        self.log_path = out / "logs" / f"{name}.log"
+        self.partial_path = out / "events" / f"{name}.partial.parquet"
+        self.log_every_s, self.checkpoint_s = log_every_s, checkpoint_s
+        self.next_log, self.next_ckpt = log_every_s, checkpoint_s
+        self.t0 = time.perf_counter()
+        self.log_path.write_text(f"# {name}: sim_day wall_h engagements useful removed live_pop eta_h\n")
+
+    def __call__(self, t_s, events, removed, decayed) -> None:
+        end = t_s >= self.duration_s
+        if t_s >= self.next_log or end:
+            wall = time.perf_counter() - self.t0
+            useful = sum(1 for e in events if e.n_fired > 0 and e.dv_retrograde > 0)
+            eta = wall * (self.duration_s - t_s) / t_s if t_s > 0 else float("nan")
+            with self.log_path.open("a") as f:
+                f.write(f"{t_s / DAY:8.2f} {wall / 3600:7.3f} {len(events):8d} {useful:8d} "
+                        f"{int(removed.sum()):6d} {int((~(removed | decayed)).sum()):7d} {eta / 3600:7.2f}\n")
+            self.next_log = (t_s // self.log_every_s + 1) * self.log_every_s
+        if t_s >= self.next_ckpt and not end:
+            import pandas as pd
+
+            tmp = self.partial_path.with_suffix(".tmp")
+            pd.DataFrame([{"run": self.name, **asdict(e)} for e in events]).to_parquet(tmp, index=False)
+            os.replace(tmp, self.partial_path)
+            self.next_ckpt = (t_s // self.checkpoint_s + 1) * self.checkpoint_s
+
+
+def run_one(cfg: RunConfig, out_dir: str | os.PathLike | None = None) -> tuple[dict, list[dict]]:
+    """Build and run ``cfg``'s scenario; return (summary row, events). With ``out_dir``,
+    progress goes to ``out_dir/logs/<name>.log`` and events are checkpointed (RunMonitor)."""
     t0 = time.perf_counter()
     sc = cfg.scenario()
-    res = run_scenario(sc)
+    mon = RunMonitor(cfg.name, out_dir, sc.run.duration_s) if out_dir is not None else None
+    res = run_scenario(sc, on_chunk=mon)
     ev_c = [e for e in res.events if e.committed]
     row = {"name": cfg.name, "config": cfg.config or "baseline",
            **{f"ovr.{k}": (str(v) if isinstance(v, (tuple, list)) else v) for k, v in cfg.overrides.items()},
@@ -48,6 +91,18 @@ def run_one(cfg: RunConfig) -> tuple[dict, list[dict]]:
            "wall_s": time.perf_counter() - t0}
     events = [{"run": cfg.name, **e} for e in res.records()]
     return row, events
+
+
+def _save_events(out_dir, name: str, ev: list[dict]) -> None:
+    """Final events for one run, written as soon as it finishes (replaces the checkpoint)."""
+    if out_dir is None:
+        return
+    import pandas as pd
+
+    d = Path(out_dir) / "events"
+    d.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(ev).to_parquet(d / f"{name}.parquet", index=False)
+    (d / f"{name}.partial.parquet").unlink(missing_ok=True)
 
 
 def _init_worker(threads: int) -> None:
@@ -86,32 +141,30 @@ def run_sweep(
     threads_per_job = threads_per_job or max(1, cpus // n_jobs)
     _warm_jit()
 
-    rows, events = [], []
+    rows = []
     if n_jobs == 1:
         _init_worker(threads_per_job)
         for c in configs:
-            r, ev = run_one(c)
+            r, ev = run_one(c, out_dir)
             rows.append(r)
-            events.append((c.name, ev))
+            _save_events(out_dir, c.name, ev)
             if progress:
                 print(f"[{len(rows)}/{len(configs)}] {c.name} {r['wall_s']:.0f}s", flush=True)
     else:
         with ProcessPoolExecutor(n_jobs, initializer=_init_worker, initargs=(threads_per_job,)) as ex:
-            futs = {ex.submit(run_one, c): c for c in configs}
+            futs = {ex.submit(run_one, c, out_dir): c for c in configs}
             for f in as_completed(futs):
                 r, ev = f.result()
                 rows.append(r)
-                events.append((futs[f].name, ev))
+                _save_events(out_dir, futs[f].name, ev)
                 if progress:
                     print(f"[{len(rows)}/{len(configs)}] {futs[f].name} {r['wall_s']:.0f}s", flush=True)
 
     df = pd.DataFrame(rows).set_index("name").loc[names].reset_index()
     if out_dir is not None:
         out = Path(out_dir)
-        (out / "events").mkdir(parents=True, exist_ok=True)
+        out.mkdir(parents=True, exist_ok=True)
         df.to_parquet(out / "summary.parquet", index=False)
-        for name, ev in events:
-            pd.DataFrame(ev).to_parquet(out / "events" / f"{name}.parquet", index=False)
     return df
 
 

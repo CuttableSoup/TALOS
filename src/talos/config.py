@@ -260,7 +260,7 @@ def build(sc: Scenario) -> Built:
     return Built(plats, pop, sc.ablation, env, planner, rng, make_atmosphere(sc), dyn)
 
 
-def run_scenario(sc: Scenario):
+def run_scenario(sc: Scenario, on_chunk=None):
     """Install the scenario atmosphere, build, run, restore the previous atmosphere."""
     from .propagator import get_atmosphere, set_atmosphere
     from .simulation import run_engagements
@@ -271,6 +271,7 @@ def run_scenario(sc: Scenario):
         b = build(sc)
         return run_engagements(b.platforms, b.population, sc.run.duration_s, dt=sc.run.dt_s,
                                chunk_s=sc.run.chunk_s, params=b.params, rng=b.rng, score=sc.run.score,
-                               planner=b.planner, env=b.env, dynamics=b.dynamics)
+                               planner=b.planner, env=b.env, dynamics=b.dynamics,
+                               on_chunk=on_chunk)
     finally:
         set_atmosphere(prev)
