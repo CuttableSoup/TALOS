@@ -94,6 +94,14 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 - Numba `prange` kernels fuse propagation + Kepler + gates (`talos/_kernels.py`);
   numpy fallback with `TALOS_NUMBA=0`. 4 sats × 1 h × 100k objects: 16.5 s → 2.1 s.
 - Sweeps fan out over processes (`n_jobs × threads_per_job = cpu_count`).
+- 2026-11 pass (ORDEM baseline, 4 sats, 69.6k objects, 32 threads): drag rates
+  and the whole lifetime integrator (`orbital_lifetime`, incl. shell residence)
+  run as numba kernels on the MSIS table; the kernel element arguments are
+  built once per chunk for all platforms; window extraction is a numba scan.
+  Build (1-yr lifetime filter) 61 s → 2.3 s, end-of-run lifetime/risk ~10 s →
+  ~1 s, ~27 → ~21 s per sim day; quarter-day run 73 s → 5.8 s with identical
+  events. A 1-yr run is now ~2.1 h. What remains is the fine-gate kernel
+  (~30 %) and Python-level scheduling.
 - GPU not used: the dev box has an AMD RX 6950 XT on Windows — no CUDA, no
   CuPy-ROCm on Windows, DirectML lacks usable float64. The CPU path is now
   dominated by Python-level scheduling rather than array math, so a GPU would

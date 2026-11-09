@@ -16,7 +16,7 @@ import os
 
 import numpy as np
 
-from .constants import MU_EARTH, R_EARTH
+from .constants import MU_EARTH, R_EARTH, YEAR as YEAR_S
 
 try:  # pragma: no cover - import guard
     if os.environ.get("TALOS_NUMBA", "1") == "0":
@@ -196,6 +196,164 @@ if HAVE_NUMBA:
                     continue
                 mask[k, j] = True
         return mask
+
+
+if HAVE_NUMBA:
+
+    @nb.njit(cache=True, inline="always")
+    def _log_rho_table(h_km, f107, A, F, L):
+        """Log-bilinear MSIS table lookup; same rules as Atmosphere.density."""
+        nA, nF = A.shape[0], F.shape[0]
+        i = min(max(np.searchsorted(A, h_km) - 1, 0), nA - 2)
+        wa = max((h_km - A[i]) / (A[i + 1] - A[i]), 0.0)  # log-linear extrapolation above the top
+        fc = min(max(f107, F[0]), F[nF - 1])
+        j = min(max(np.searchsorted(F, fc) - 1, 0), nF - 2)
+        wf = (fc - F[j]) / (F[j + 1] - F[j])
+        return ((1 - wa) * (1 - wf) * L[i, j] + wa * (1 - wf) * L[i + 1, j]
+                + (1 - wa) * wf * L[i, j + 1] + wa * wf * L[i + 1, j + 1])
+
+    @nb.njit(cache=True, inline="always")
+    def _rates1(a, e, B, f107, A, F, L, n_quad):
+        sa = 0.0
+        se = 0.0
+        for q in range(n_quad):
+            cE = math.cos(TWO_PI * q / n_quad)
+            rho = math.exp(_log_rho_table((a * (1 - e * cE) - R_EARTH) / 1e3, f107, A, F, L))
+            s = math.sqrt((1 + e * cE) / (1 - e * cE))
+            sa += rho * (1 + e * cE) * s
+            se += rho * cE * s
+        n = math.sqrt(MU_EARTH / a ** 3)
+        return -B * a * a * sa / n_quad * n, -B * a * (1 - e * e) * se / n_quad * n
+
+    @nb.njit(parallel=True, cache=True)
+    def decay_rates_table(a, e, B, f107, A, F, L, n_quad):
+        """Orbit-averaged drag (da/dt, de/dt) per object with the MSIS table density;
+        fused version of lifetime.decay_rates (same quadrature)."""
+        N = a.shape[0]
+        da = np.empty(N)
+        de = np.empty(N)
+        for k in nb.prange(N):
+            da[k], de[k] = _rates1(a[k], e[k], B[k], f107[k], A, F, L, n_quad)
+        return da, de
+
+
+if HAVE_NUMBA:
+
+    @nb.njit(cache=True)
+    def mask_runs(mask, min_steps):
+        """Contiguous True runs along axis 0 of a (T, N) mask -> (col, start, stop) arrays,
+        sorted by (col, start); runs shorter than ``min_steps`` are dropped."""
+        T, N = mask.shape
+        cap = 64
+        col = np.empty(cap, np.int64)
+        st = np.empty(cap, np.int64)
+        sp = np.empty(cap, np.int64)
+        n = 0
+        for j in range(N):
+            k = 0
+            while k < T:
+                if mask[k, j]:
+                    s0 = k
+                    while k < T and mask[k, j]:
+                        k += 1
+                    if k - s0 >= min_steps:
+                        if n == cap:
+                            cap *= 2
+                            col2, st2, sp2 = np.empty(cap, np.int64), np.empty(cap, np.int64), np.empty(cap, np.int64)
+                            col2[:n], st2[:n], sp2[:n] = col[:n], st[:n], sp[:n]
+                            col, st, sp = col2, st2, sp2
+                        col[n], st[n], sp[n] = j, s0, k
+                        n += 1
+                else:
+                    k += 1
+        return col[:n], st[:n], sp[:n]
+
+
+if HAVE_NUMBA:
+
+    @nb.njit(cache=True, inline="always")
+    def _f107(t_s, act_const, f_const, epoch_year, cmin, cmax, period, fmin, fmax):
+        """Atmosphere.f107 (constant or cosine solar cycle)."""
+        if act_const:
+            return f_const
+        year = epoch_year + t_s / YEAR_S
+        x = ((year - cmin) / period) % 1.0
+        xr = (cmax - cmin) / period
+        if x < xr:
+            g = 0.5 * (1.0 - math.cos(math.pi * x / xr))
+        else:
+            g = 0.5 * (1.0 + math.cos(math.pi * (x - xr) / (1.0 - xr)))
+        return fmin + (fmax - fmin) * g
+
+    @nb.njit(cache=True, inline="always")
+    def _shell_frac(a, e, lo, hi, n_quad, out):
+        """Time fraction of the orbit inside each [lo, hi) altitude band, added into ``out``."""
+        wsum = 0.0
+        for q in range(n_quad):
+            wsum += 1.0 - e * math.cos(TWO_PI * q / n_quad)
+        for q in range(n_quad):
+            cE = math.cos(TWO_PI * q / n_quad)
+            alt = a * (1 - e * cE) - R_EARTH
+            w = (1.0 - e * cE) / wsum
+            for k in range(lo.shape[0]):
+                if lo[k] <= alt < hi[k]:
+                    out[k] += w
+
+    @nb.njit(parallel=True, cache=True)
+    def lifetime_kernel(a0, e0, B, t0, max_s, reentry_alt, step_frac, max_step, A, F, L,
+                        act_const, f_const, epoch_year, cmin, cmax, period, fmin, fmax, lo, hi):
+        """lifetime.orbital_lifetime with the MSIS table atmosphere, one object per thread:
+        same RK2 step rule (``step_frac`` scale heights of perigee drop, clipped [1 s, max_step])
+        and the same shell-residence rule (8 sub-step midpoints). Returns (life, residence)."""
+        N = a0.shape[0]
+        K = lo.shape[0]
+        life = np.full(N, np.inf)
+        res = np.zeros((N, K))
+        dh = 5e3
+        hmin = 1e300
+        hmax = -1e300
+        for k in range(K):
+            hmin = min(hmin, lo[k])
+            hmax = max(hmax, hi[k])
+        for j in nb.prange(N):
+            a, e, Bj = a0[j], e0[j], B[j]
+            if a * (1 - e) - R_EARTH < reentry_alt:
+                life[j] = 0.0
+                continue
+            t = 0.0
+            frac = np.zeros(K)
+            while True:
+                ti = t0[j] + t
+                f = _f107(ti, act_const, f_const, epoch_year, cmin, cmax, period, fmin, fmax)
+                da, de = _rates1(a, e, Bj, f, A, F, L, 64)
+                drp = da * (1 - e) - a * de
+                hp = (a * (1 - e) - R_EARTH) / 1e3
+                H = 2 * dh / max(_log_rho_table(hp - dh / 1e3, f, A, F, L)
+                                 - _log_rho_table(hp + dh / 1e3, f, A, F, L), 1e-9)
+                dt = min(max(step_frac * H / max(-drp, 1e-30), 1.0), max_step)
+                if K > 0:
+                    a1, e1 = a + da * dt, max(e + de * dt, 0.0)
+                    # skip the quadrature when the swept altitude range misses every shell
+                    if min(a * (1 - e), a1 * (1 - e1)) - R_EARTH < hmax and                             max(a * (1 + e), a1 * (1 + e1)) - R_EARTH >= hmin:
+                        for k in range(K):
+                            frac[k] = 0.0
+                        for u in range(8):
+                            w = (u + 0.5) / 8
+                            _shell_frac(a + da * dt * w, max(e + de * dt * w, 0.0), lo, hi, 64, frac)
+                        span = min(dt, max(max_s - t, 0.0))
+                        for k in range(K):
+                            res[j, k] += frac[k] / 8 * span
+                f2 = _f107(ti + dt, act_const, f_const, epoch_year, cmin, cmax, period, fmin, fmax)
+                da2, de2 = _rates1(a + da * dt, max(e + de * dt, 0.0), Bj, f2, A, F, L, 64)
+                a = a + 0.5 * (da + da2) * dt
+                e = max(e + 0.5 * (de + de2) * dt, 0.0)
+                t += dt
+                if a * (1 - e) - R_EARTH < reentry_alt:
+                    life[j] = t
+                    break
+                if t > max_s:
+                    break
+        return life, res
 
 
 def element_args(el, ballistic_coeff=None, epoch=None):

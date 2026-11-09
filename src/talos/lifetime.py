@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from . import _kernels
 from .constants import DAY, R_EARTH, YEAR
 from .elements import KeplerElements, elements_to_rv, rv_to_elements
 from .propagator import _EXP_ATMOS, density, get_atmosphere, propagate
@@ -46,7 +47,15 @@ def _scale_height_m(alt_m, t_s=0.0) -> np.ndarray:
 
 def decay_rates(a, e, ballistic_coeff, n_quad: int = 64, t_s=0.0) -> tuple[np.ndarray, np.ndarray]:
     """Orbit-averaged (da/dt, de/dt) [m/s, 1/s] from drag at sim time ``t_s``.
-    B = Cd*A/m [m^2/kg]."""
+    B = Cd*A/m [m^2/kg]. Uses the fused numba kernel with the MSIS table atmosphere."""
+    atm = get_atmosphere()
+    if _kernels.HAVE_NUMBA and atm is not None and atm.cfg.model == "msis_table":
+        shape = np.broadcast_shapes(np.shape(a), np.shape(e), np.shape(ballistic_coeff), np.shape(t_s))
+        flat = [np.ascontiguousarray(np.broadcast_to(np.asarray(x, float), shape)).reshape(-1)
+                for x in (a, e, ballistic_coeff)]
+        f = np.ascontiguousarray(np.broadcast_to(atm.f107(t_s), shape), float).reshape(-1)
+        da, de = _kernels.decay_rates_table(*flat, f, atm._alt, atm._f, atm._lr, n_quad)
+        return da.reshape(shape), de.reshape(shape)
     a = np.asarray(a, float)[..., None]
     e = np.asarray(e, float)[..., None]
     B = np.asarray(ballistic_coeff, float)[..., None]
@@ -99,6 +108,21 @@ def orbital_lifetime(
     """
     scalar = np.ndim(a) == 0 and np.ndim(e) == 0 and np.ndim(ballistic_coeff) == 0
     a, e, B, t0 = (np.atleast_1d(x).astype(float) for x in np.broadcast_arrays(a, e, ballistic_coeff, t0_s))
+    atm = get_atmosphere()
+    if _kernels.HAVE_NUMBA and atm is not None and atm.cfg.model == "msis_table":
+        c = atm.cfg
+        sh = np.zeros((0, 2)) if shells_m is None else np.asarray(shells_m, float).reshape(-1, 2)
+        life, res = _kernels.lifetime_kernel(
+            *(np.ascontiguousarray(x.reshape(-1)) for x in (a, e, B, t0)), float(max_s), float(reentry_alt_m),
+            float(step_frac), float(max_step_s), atm._alt, atm._f, atm._lr, c.activity == "constant",
+            float(c.f107_constant), float(atm.epoch_year), float(c.cycle_min_year), float(c.cycle_max_year),
+            float(c.cycle_period_yr), float(c.f107_min), float(c.f107_max),
+            np.ascontiguousarray(sh[:, 0]), np.ascontiguousarray(sh[:, 1]))
+        life = life.reshape(a.shape)
+        if shells_m is not None:
+            res = res.reshape(a.shape + (len(sh),))
+            return (float(life[0]), res[0]) if scalar else (life, res)
+        return float(life[0]) if scalar else life
     t = np.zeros_like(a)
     life = np.full_like(a, np.inf)
     alive = a * (1 - e) - R_EARTH >= reentry_alt_m

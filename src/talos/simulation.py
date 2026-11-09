@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from . import _kernels
 from .constants import R_EARTH, YEAR
 from .debris import DebrisPopulation
 from .engagement import AblationParams, integrate_burst, pulse_times
@@ -186,9 +187,13 @@ def run_engagements(
                 pop0 = pop0.append(pop.subset(np.arange(n_old, len(pop))))
         if planner is not None:
             planner.refresh(float(t[0]), pop, removed | decayed)
+        # kernel element arguments for the whole population, shared by all platforms this chunk.
+        # Objects engaged later in the chunk keep stale args, but they are excluded via ``engaged``.
+        elem_args = (_kernels.element_args(pop.elements, pop.ballistic_coeff, pop.epoch_s)
+                     if _kernels.HAVE_NUMBA and len(platforms) > 1 else None)
         for p_idx, plat in enumerate(platforms):
             wins = screen_windows(plat, pop, t, candidates=np.flatnonzero(~(removed | decayed)), batch=batch,
-                                  sun_hat=sun_hat)
+                                  sun_hat=sun_hat, elem_args=elem_args)
             if not wins:
                 continue
             k = int(np.searchsorted(t, ready_at[plat.name]))

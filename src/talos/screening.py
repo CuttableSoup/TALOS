@@ -184,6 +184,9 @@ class Window:
 
 def find_windows(mask: np.ndarray, min_steps: int = 1) -> list[Window]:
     """Contiguous True runs along axis 0 of a (T, N) mask, sorted by (debris, start)."""
+    if _kernels.HAVE_NUMBA:
+        col, st, sp = _kernels.mask_runs(np.ascontiguousarray(mask, dtype=np.bool_), int(min_steps))
+        return [Window(c, s, e) for c, s, e in zip(col.tolist(), st.tolist(), sp.tolist())]
     T, N = mask.shape
     pad = np.zeros((1, N), dtype=np.int8)
     d = np.diff(np.concatenate([pad, mask.astype(np.int8), pad]), axis=0)
@@ -240,6 +243,7 @@ def screen_windows(
     use_kernel: bool | None = None,
     sat_states: tuple[np.ndarray, np.ndarray] | None = None,
     sun_hat: np.ndarray | None = None,
+    elem_args: tuple | None = None,
 ) -> list[Window]:
     """Memory-bounded screening: windows only, objects processed in batches.
 
@@ -247,6 +251,8 @@ def screen_windows(
     ``coarse_step_s`` enables the conservative coarse sieve (None = fine-step everything).
     Window ``debris_index`` refers to the original population index.
     ``sun_hat`` (T, 3) enables the sun gates (target sunlit, sun exclusion).
+    ``elem_args``: ``_kernels.element_args`` of the WHOLE population at its current state,
+    computed once and shared by all platforms in a chunk (kernel path only).
     """
     idx = np.arange(len(population)) if candidates is None else np.asarray(candidates)
     rmax = platform.atp.engage_range_max_m
@@ -255,7 +261,7 @@ def screen_windows(
         use_kernel = _kernels.HAVE_NUMBA
     if use_kernel and len(idx) and len(t) > 1:
         return _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_s, sat_states,
-                                      sun_hat)
+                                      sun_hat, elem_args)
     if coarse_step_s is not None and len(idx) and len(t) > 1:
         keep = np.zeros(len(idx), dtype=bool)
         for k in range(0, len(idx), 4 * batch):
@@ -277,7 +283,7 @@ def screen_windows(
 
 
 def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_s, sat_states=None,
-                           sun_hat=None) -> list[Window]:
+                           sun_hat=None, elem_args=None) -> list[Window]:
     """Numba path: parallel coarse sieve, then parallel fused fine gates.
 
     ``sat_states`` = (r, v) of the platform on grid ``t`` (precomputed/cached);
@@ -286,7 +292,8 @@ def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_
     atp = platform.atp
     rmax = atp.engage_range_max_m
     sub = population.elements[idx]
-    args = _kernels.element_args(sub, population.ballistic_coeff[idx], population.epoch_s[idx])
+    args = (_kernels.element_args(sub, population.ballistic_coeff[idx], population.epoch_s[idx])
+            if elem_args is None else tuple(x[idx] for x in elem_args))
     if sat_states is not None:
         r_s, v_s = sat_states
     if coarse_step_s is not None:
