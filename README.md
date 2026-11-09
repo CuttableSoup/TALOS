@@ -329,9 +329,48 @@ raw spectra). Installed at `%LOCALAPPDATA%\NASA\ORDEM 3.2` (or `TALOS_ORDEM_HOME
 - Approximations: circular orbits at the altitude seen (no eccentricity
   structure), ORDEM uncertainty files unused, power-law size inside each
   half-decade, background sources drawn from the same table. Material classes
-  give an optional μ = (2/3)ρd sphere model (`areal_density_model = "sphere"`),
-  default stays fixed μ.
+  give an optional μ = (2/3)ρd sphere model (`areal_density_model = "sphere"`);
+  the baseline is SBM (above).
 - Licence: ORDEM is NASA SUA software; tables are derived data and stay out of git.
+
+## 1-year baseline (2026-11)
+ORDEM 2026 + SBM μ, 4 sats, 20 kW, 365 sim days (`python scripts/compare_mu_model.py
+365 --models sbm --out runs/baseline_1yr`, 3.4 h wall). 69.6k samples at weight
+≈ 1, so counts are physical. Saturation 0.99, no brownout, no breakup drawn.
+- Year totals: 10.63 useful eng/hr/sat, Δv 4.38 m/s per engagement, **5,443
+  removed** (5,412 credited), 144k debris-yr/yr, 3,483 natural decays,
+  1,588 background additions, net −7.3k/yr.
+- The 30-day × 12 extrapolation (3.0k/yr) is not the annual rate. Removals
+  need repeated engagements (median 13 per removed object, median 113 d
+  from first engagement to removal), so the monthly count first rises, then
+  falls as the light tail is used up:
+  | month | removed | Δv/eng (m/s) | median μ, removed | engaged with μ < 1 |
+  |---|---|---|---|---|
+  | 1 | 254 | 5.66 | 0.54 | 34 % |
+  | 2 | 425 | 5.50 | 0.58 | 33 % |
+  | 3 | 505 | 5.31 | 0.60 | 32 % |
+  | 4 | 565 | 4.92 | 0.64 | 29 % |
+  | 5 | 577 | 4.61 | 0.71 | 26 % |
+  | 6 | 533 | 4.45 | 0.76 | 25 % |
+  | 7 | 552 | 4.13 | 0.80 | 21 % |
+  | 8 | 497 | 3.94 | 0.85 | 19 % |
+  | 9 | 544 | 3.74 | 0.92 | 17 % |
+  | 10 | 433 | 3.69 | 0.89 | 14 % |
+  | 11 | 329 | 3.53 | 0.99 | 12 % |
+  | 12 | 229 | 3.09 | 1.01 | 8 % |
+  Engagements hold at ~31k/month throughout. Only the target mix changes.
+- The low-μ pool gets used up. Share of the initial population removed in
+  one year, by μ (kg/m²): < 0.5: 71 % (1,265/1,775); 0.5–1: 40 %; 1–2: 13 %;
+  2–5: 1.3 %; ≥ 5: 2 of 32.6k. 68 % of removals have μ < 1 (11 % of the
+  population).
+- So no steady state in year 1. The sustained rate is set by how fast low-μ
+  objects are replenished (background sources, breakups), not by the year-1
+  harvest of the existing stock. Month 12 is at 229 and still falling; a
+  year-2 run is needed to find the floor.
+- Side issue: without the laser the sampled population also shrinks: background
+  additions are 1.6k/yr against 3.5k/yr natural decays. The background source rate is a pick.
+- Runs started from now on also write `logs/<name>.log`, one line per sim
+  day, and `events/<name>.partial.parquet`, an event checkpoint saved every sim week.
 
 ## Gate 5: lifetime vs NASA DAS 3.2.7 (2026-11)
 `talos.das` calls DAS's `Fortran.dll` LIFEDWELL (PROP3D: J2–J4, luni-solar,
@@ -357,4 +396,4 @@ runs/das_lifetime; `tests/test_das.py` skips without DAS.
   close most of it (DAS's `solarflux.bin` format is undocumented).
 
 ## Next step
-Detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.
+Year-2 run / source-rate check (where the removal rate settles); detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.
