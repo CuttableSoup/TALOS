@@ -31,3 +31,10 @@ def test_readme_matrix_size_and_unique_names():
     m = readme_matrix()
     assert len(m) == 5 * 4 * 2 * 3 * 3
     assert len({c.name for c in m}) == len(m)
+
+
+def test_readme_matrix_mu_axis_forces_fixed_model():
+    m = readme_matrix()
+    assert all(c.overrides["population.areal_density_model"] == "fixed" for c in m)
+    sc = m[0].scenario()
+    assert sc.population.areal_density_model == "fixed" and sc.population.areal_density == 0.2

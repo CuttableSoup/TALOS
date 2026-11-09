@@ -303,9 +303,11 @@ raw spectra). Installed at `%LOCALAPPDATA%\NASA\ORDEM 3.2` (or `TALOS_ORDEM_HOME
   Same shot rate and Δv, but 2.4× the removals: the SSO-concentrated debris
   stays near-coplanar with the platforms, so the same objects come back into
   range and the removal-progress scheduler finishes them (~11 engagements
-  each). Debris-years removed is about equal despite 2.4× the removals; not yet
-  explained (removed median start perigee is 755 km vs 738 km toy, so it is not
-  that finished objects start lower). No breakup was drawn
+  each). Debris-years removed is about equal despite 2.4× the removals: it sums
+  lifetime reduction over every engaged object (200-yr cap), so it tracks total
+  Δv delivered (29.1k × 9.29 ≈ 270k m/s vs 29.4k × 9.21 ≈ 271k m/s), mostly
+  partial shots on long-lived high objects; a removal adds at most the object's
+  remaining lifetime (~years at 750 km). No breakup was drawn
   in the ORDEM run (Poisson, 0.5/yr) and no natural decays (fewer low objects),
   so net change is −2.4k/yr vs +23k/yr in the toy run, which had one breakup.
   Removals are still climbing at day 30.
@@ -316,7 +318,28 @@ raw spectra). Installed at `%LOCALAPPDATA%\NASA\ORDEM 3.2` (or `TALOS_ORDEM_HOME
   default stays fixed μ.
 - Licence: ORDEM is NASA SUA software; tables are derived data and stay out of git.
 
+## Gate 5: lifetime vs NASA DAS 3.2.7 (2026-11)
+`talos.das` calls DAS's `Fortran.dll` LIFEDWELL (PROP3D: J2–J4, luni-solar,
+SRP, Jacchia-77, Cd 2.2, ODPO F10.7 forecast) via ctypes; install at
+`%LOCALAPPDATA%\NASA\DAS3.2.7` or `TALOS_DAS_HOME`. Same Cd and A/m definition
+as TALOS (A/m = 1/μ). `python scripts/validate_lifetime_das.py` (7 s) →
+runs/das_lifetime; `tests/test_das.py` skips without DAS.
+- Circular SSO, 400–1000 km × A/m 0.05–1, starts 2026.97 and 2031.0 (121
+  cases where both re-enter within 100 yr): TALOS/DAS geo-mean 0.92, log-sd
+  0.34; for DAS lifetimes < 25 yr, geo-mean 0.88, range 0.38–2.00.
+- Structure: (a) a diagonal band at 0.4–0.5 where DAS lifetimes jump (objects
+  that ride out the next solar minimum in DAS but not in TALOS): the two solar
+  cycle forecasts differ in phase/depth; (b) from 2031 (solar min) TALOS is
+  ~0.5× below 500 km, i.e. TALOS's minimum-activity density is too high (f107_min
+  70 is a pick); (c) above ~750 km TALOS is 1.1–1.5× (longer).
+- Lowered orbits (apogee 800/950 km, perigee 250–750 km, A/m 0.2/0.5, 2026.97):
+  TALOS/DAS 0.79–0.87 at perigees 250–450 km (lifetimes 3–390 d), i.e. around
+  the 30-day removal criterion TALOS is ~15 % short. That is ~7 km of perigee
+  (H ≈ 45 km), ~2 m/s of the ~160 m/s needed: negligible for removal counts.
+  Larger gaps (0.37–0.54) again sit at the cycle-timing step.
+- Not calibrated: neither model is truth, and the cycle forecast is the main
+  disagreement. Replacing the parametric cycle with the ODPO F10.7 table would
+  close most of it (DAS's `solarflux.bin` format is undocumented).
+
 ## Next step
-30-day ORDEM baseline; DAS 3.2.7 lifetime cross-check (gate 5, `Fortran.dll`
-LIFEDWELL via ctypes: first look at 600/800/1000 km, A/m = 1, shows TALOS
-−12 % / −19 % / +18 % vs DAS); detection & tracking; MASTER cross-check.
+Detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.

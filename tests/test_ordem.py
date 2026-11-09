@@ -112,8 +112,46 @@ def test_build_uses_ordem_table(tmp_path, monkeypatch):
     assert len(new) == 5 and np.all(new.weight == b.dynamics.weight) and np.all(new.epoch_s == 86400.0)
 
 
+def test_sbm_area_to_mass_matches_johnson_2001(rng):
+    from talos.population import sbm_area_to_mass, sbm_log_am_params
+
+    m, s = sbm_log_am_params(np.array([0.01, 10**-1.5, 0.1]))
+    np.testing.assert_allclose(m, [-0.3, -0.65, -1.0])
+    np.testing.assert_allclose(s, [0.2 + 0.1333 * 1.5, 0.2 + 0.1333 * 2.0, 0.2 + 0.1333 * 2.5])
+    x = np.log10(sbm_area_to_mass(np.full(50000, 0.01), rng))
+    assert np.mean(x) == pytest.approx(-0.3, abs=0.01) and np.std(x) == pytest.approx(0.4, rel=0.03)
+    assert x.min() >= -0.3 - 3 * 0.4 - 1e-9
+
+
+def test_sbm_model_keeps_nak_as_spheres(tmp_path, monkeypatch):
+    monkeypatch.setattr(ordem, "DATA_DIR", tmp_path)
+    _table(2026).save()
+    sc = load_scenario(overrides={"population.kind": "ordem", "population.n_samples": 4000,
+                                  "population.min_lifetime_yr": None, "population.areal_density_model": "sbm",
+                                  "constellation.n_sats": 1})
+    pop = build(sc).population
+    sphere = np.isclose(pop.areal_density, 2 / 3 * 870.0 * pop.diameter_m)
+    assert np.mean(sphere) == pytest.approx(2000 / 10000, abs=0.02)  # the NK cell
+    frag = pop.areal_density[~sphere]
+    assert 1.0 < np.median(frag) < 12.0
+
+
 def test_missing_table_has_build_hint(tmp_path, monkeypatch):
     monkeypatch.setattr(ordem, "DATA_DIR", tmp_path)
     sc = load_scenario(overrides={"population.kind": "ordem", "population.n_samples": 10})
     with pytest.raises(FileNotFoundError, match="build_ordem_table"):
         build(sc)
+
+
+def test_toy_population_honours_sbm():
+    sc = load_scenario(overrides={"population.kind": "toy", "population.n_real": 3000,
+                                  "population.min_lifetime_yr": None, "population.areal_density_model": "sbm",
+                                  "constellation.n_sats": 1})
+    pop = build(sc).population
+    assert np.std(pop.areal_density) > 0 and 1.0 < np.median(pop.areal_density) < 12.0
+    fixed = build(load_scenario(overrides={"population.kind": "toy", "population.n_real": 3000,
+                                           "population.min_lifetime_yr": None,
+                                           "population.areal_density_model": "fixed",
+                                           "constellation.n_sats": 1})).population
+    np.testing.assert_array_equal(pop.diameter_m, fixed.diameter_m)  # same toy draws, only mu differs
+    assert np.all(fixed.areal_density == 1.0)

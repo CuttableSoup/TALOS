@@ -221,9 +221,17 @@ def build(sc: Scenario) -> Built:
     source = None
     if p.kind == "toy":
         n = int(p.n_samples or p.n_real)
+        if p.areal_density_model not in ("fixed", "sbm"):
+            raise ValueError(f"toy population supports areal_density_model fixed|sbm, not {p.areal_density_model!r}")
+        mu_fn = None
+        if p.areal_density_model == "sbm":  # separate stream so the toy's own draws are unchanged
+            from .population import sbm_area_to_mass
+
+            mu_rng = np.random.default_rng(sc.run.seed + 3)
+            mu_fn = lambda d: 1.0 / sbm_area_to_mass(d, mu_rng)  # noqa: E731
         pop = toy_population(n, pop_rng, alt_km=p.alt_km, n_real=p.n_real,
                              areal_density=p.areal_density, min_lifetime_yr=p.min_lifetime_yr,
-                             albedo_median=p.albedo_median, albedo_log_sigma=p.albedo_log_sigma)
+                             albedo_median=p.albedo_median, albedo_log_sigma=p.albedo_log_sigma, mu_fn=mu_fn)
     elif p.kind == "ordem":
         from .ordem import OrdemTable
         from .population import ordem_population

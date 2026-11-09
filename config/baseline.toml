@@ -30,8 +30,9 @@ kind = "ordem"                 # [sourced] NASA ORDEM 3.2 table (scripts/build_o
 # materials = ["NK", "LD", "MD", "HD", "IN"]   # ORDEM classes; default all
 n_real = 100000                # toy only ([guess] Phipps ~100k); ORDEM 2026 gives ~76k 1-10 cm in 600-1000 km
 alt_km = [600.0, 1000.0]
-areal_density = 1.0            # kg/m^2 (sweep 0.2, 1, 10)
-areal_density_model = "fixed"  # fixed | sphere (ORDEM material density, mu = 2/3 rho d; ordem only)
+areal_density = 1.0            # kg/m^2, used when areal_density_model = "fixed" (sweep 0.2, 1, 10)
+areal_density_model = "sbm"    # [sourced] NASA std breakup model A/m (mu = 1/(A/m); median ~2 kg/m^2 at 1 cm,
+                               # ~10 above 5.6 cm), NaK droplets as spheres | fixed | sphere (2/3 rho d); ordem only
 min_lifetime_yr = 1.0          # drop objects that re-enter within a year anyway
 albedo_median = 0.1            # [pick] Lambertian geometric albedo (debris ~0.1-0.2)
 albedo_log_sigma = 0.5         # [pick] lognormal spread per object, clipped 0.02-0.6

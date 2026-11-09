@@ -113,7 +113,12 @@ class PopulationDynamics:
             parent = self.source(1, rng, t, w).elements if self.source is not None else None
             el = breakup_elements(rng, max(1, int(round(self.cfg.breakup_fragments / w))),
                                   self.cfg.breakup_dv_sigma_m_s, pc.alt_km, parent=parent)
-            new.append(_objects(el, rng, t, w, pc.areal_density, pc.albedo_median, pc.albedo_log_sigma))
+            frag = _objects(el, rng, t, w, pc.areal_density, pc.albedo_median, pc.albedo_log_sigma)
+            if getattr(pc, "areal_density_model", "fixed") == "sbm":  # fragments: SBM A/m like the population
+                from .population import sbm_area_to_mass
+
+                frag.areal_density = 1.0 / sbm_area_to_mass(frag.diameter_m, rng)
+            new.append(frag)
             self.stats["breakups"] += 1
             self.stats["added_breakup"] += len(el)
         for p in new:

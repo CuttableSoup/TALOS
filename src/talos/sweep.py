@@ -132,5 +132,7 @@ def readme_matrix(base: RunConfig = RunConfig(name="base"), **axes_override) -> 
         kw = dict(zip(keys, vals))
         tag = "_".join(f"{k.split('.')[-1]}={'-'.join(map(str, v)) if isinstance(v, tuple) else v}"
                        for k, v in kw.items())
+        if "population.areal_density" in kw:  # a mu axis only means something with the fixed-mu model
+            kw.setdefault("population.areal_density_model", "fixed")
         out.append(RunConfig(name=tag, config=base.config, overrides={**base.overrides, **kw}))
     return out
