@@ -222,6 +222,14 @@ if HAVE_NUMBA:
         return ((1 - wa) * (1 - wf) * L[i, j] + wa * (1 - wf) * L[i + 1, j]
                 + (1 - wa) * wf * L[i, j + 1] + wa * wf * L[i + 1, j + 1])
 
+    @nb.njit(parallel=True, cache=True)
+    def density_table(h_km, f107, A, F, L):
+        """Vectorised Atmosphere.density for the MSIS table (flat inputs)."""
+        out = np.empty(h_km.shape[0])
+        for i in nb.prange(h_km.shape[0]):
+            out[i] = math.exp(_log_rho_table(h_km[i], f107[i], A, F, L))
+        return out
+
     @nb.njit(cache=True, inline="always")
     def _rates1(a, e, B, f107, A, F, L, n_quad):
         sa = 0.0

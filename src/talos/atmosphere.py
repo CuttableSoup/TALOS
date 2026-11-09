@@ -87,6 +87,12 @@ class Atmosphere:
         f = np.broadcast_to(self.f107(t_s), np.broadcast_shapes(np.shape(h), np.shape(t_s)))
         h = np.broadcast_to(h, f.shape)
         A, F, L = self._alt, self._f, self._lr
+        from . import _kernels
+
+        if _kernels.HAVE_NUMBA:
+            out = _kernels.density_table(np.ascontiguousarray(h).reshape(-1),
+                                         np.ascontiguousarray(f, float).reshape(-1), A, F, L)
+            return out.reshape(f.shape)
         i = np.clip(np.searchsorted(A, h) - 1, 0, len(A) - 2)
         wa = (h - A[i]) / (A[i + 1] - A[i])  # may exceed [0, 1]: log-linear extrapolation
         wa = np.maximum(wa, 0.0)  # clamp below 100 km

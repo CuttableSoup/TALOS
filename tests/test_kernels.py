@@ -139,3 +139,18 @@ def test_lifetime_kernel_matches_numpy(monkeypatch, activity):
     np.testing.assert_allclose(lk2, lk, rtol=0)
     np.testing.assert_allclose(rk, rn, rtol=1e-6, atol=1.0)  # 1 s: shell-skip shortcut
     assert isinstance(s_k, float) and s_k == pytest.approx(s_n, rel=1e-9)
+
+
+def test_density_kernel_matches_numpy(monkeypatch):
+    from talos.atmosphere import Atmosphere, AtmosphereConfig
+    from talos.constants import YEAR
+
+    atm = Atmosphere(AtmosphereConfig())
+    rng = np.random.default_rng(9)
+    h = rng.uniform(50e3, 2500e3, (40, 50))  # below the table, inside, above (extrapolated)
+    t = rng.uniform(0, 11 * YEAR, 50)
+    got = atm.density(h, t)
+    s = atm.density(500e3, 0.0)
+    monkeypatch.setattr(_kernels, "HAVE_NUMBA", False)
+    np.testing.assert_allclose(got, atm.density(h, t), rtol=1e-12)
+    assert np.shape(s) == () and s == pytest.approx(atm.density(500e3, 0.0), rel=1e-12)
