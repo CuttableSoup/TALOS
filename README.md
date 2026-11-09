@@ -98,10 +98,14 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
   and the whole lifetime integrator (`orbital_lifetime`, incl. shell residence)
   run as numba kernels on the MSIS table; the kernel element arguments are
   built once per chunk for all platforms; window extraction is a numba scan.
-  Build (1-yr lifetime filter) 61 s → 2.3 s, end-of-run lifetime/risk ~10 s →
-  ~1 s, ~27 → ~21 s per sim day; quarter-day run 73 s → 5.8 s with identical
-  events. A 1-yr run is now ~2.1 h. What remains is the fine-gate kernel
-  (~30 %) and Python-level scheduling.
+  The fine-gate kernel skips steps that cannot be back in range yet
+  (range-rate bound), and the coarse sieve runs at 8×/2×/1× its step. Build (1-yr
+  lifetime filter) 61 s → 2.3 s, end-of-run lifetime/risk ~10 s → ~1 s, 33 → ~16 s
+  per sim day; quarter-day run 73 s → 4.8 s with identical events. A 1-yr run is
+  now ~1.6 h.
+- What remains is serial Python scheduling (candidate evaluation, burst
+  integration, resource state machine): a run at 8 threads is as fast as at 32.
+  Sweeps should use `n_jobs = 4, threads_per_job = 8` (4 runs for the price of one).
 - GPU not used: the dev box has an AMD RX 6950 XT on Windows — no CUDA, no
   CuPy-ROCm on Windows, DirectML lacks usable float64. The CPU path is now
   dominated by Python-level scheduling rather than array math, so a GPU would

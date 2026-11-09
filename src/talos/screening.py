@@ -296,20 +296,26 @@ def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_
             if elem_args is None else tuple(x[idx] for x in elem_args))
     if sat_states is not None:
         r_s, v_s = sat_states
+    vmax = np.ascontiguousarray(max_speed(platform.orbit) + max_speed(sub), dtype=float)
     if coarse_step_s is not None:
-        if sat_states is not None:
-            dt = t[1] - t[0]
-            step = max(1, int(round(coarse_step_s / dt)))
-            ci = np.unique(np.append(np.arange(0, len(t), step), len(t) - 1))
-            tc, r_sc = np.ascontiguousarray(t[ci]), r_s[ci]
-        else:
-            n = max(1, int(np.ceil((t[-1] - t[0]) / coarse_step_s)))
-            tc = np.linspace(t[0], t[-1], n + 1)
-            r_sc, _ = states_at(platform.orbit, tc)
-        vmax = np.ascontiguousarray(max_speed(platform.orbit) + max_speed(sub), dtype=float)
-        keep = _kernels.sieve_kernel(tc, np.ascontiguousarray(r_sc), vmax, rmax, *args)
-        idx = idx[keep]
-        args = tuple(x[keep] for x in args)
+        # multi-level sieve: 8x and 2x coarser passes drop far objects cheaply, then the coarse_step_s
+        # pass. Both bounds are conservative, so the surviving windows are unchanged.
+        for step_s in (8 * coarse_step_s, 2 * coarse_step_s, coarse_step_s):
+            if not len(idx):
+                break
+            if sat_states is not None:
+                dt = t[1] - t[0]
+                step = max(1, int(round(step_s / dt)))
+                ci = np.unique(np.append(np.arange(0, len(t), step), len(t) - 1))
+                tc, r_sc = np.ascontiguousarray(t[ci]), r_s[ci]
+            else:
+                n = max(1, int(np.ceil((t[-1] - t[0]) / step_s)))
+                tc = np.linspace(t[0], t[-1], n + 1)
+                r_sc, _ = states_at(platform.orbit, tc)
+            keep = _kernels.sieve_kernel(tc, np.ascontiguousarray(r_sc), vmax, rmax, *args)
+            idx = idx[keep]
+            vmax = vmax[keep]
+            args = tuple(x[keep] for x in args)
     if not len(idx):
         return []
     if sat_states is None:
@@ -327,6 +333,7 @@ def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_
         max(1, int(np.ceil(atp.acquisition_s / (t[1] - t[0]) - 1e-9))),
         np.ascontiguousarray(0.5 * population.diameter_m[idx], dtype=float),
         np.ascontiguousarray(population.albedo[idx], dtype=float),
+        vmax,
         *args,
     )
     return [Window(int(idx[w.debris_index]), w.start, w.stop) for w in find_windows(mask, min_steps)]

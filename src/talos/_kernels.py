@@ -121,7 +121,7 @@ if HAVE_NUMBA:
     @nb.njit(parallel=True, cache=True)
     def fine_mask_kernel(t, r_sat, v_sat, rmin, rmax, clear_r, cos_for, slew_max,
                          sun, use_sun, need_lit, cos_excl,
-                         use_det, det_range, det_lim, trk_lim, bg_pen, acq_steps, radius, albedo,
+                         use_det, det_range, det_lim, trk_lim, bg_pen, acq_steps, radius, albedo, vmax,
                          a0, adot, e, inc, raan0, raan_dot, argp0, argp_dot, M0, M_dot):
         """(T, n) engagement mask: range, Earth-limb LOS, field of regard, slew rate and,
         with ``use_sun``, target sunlit (cylindrical shadow) + sun-exclusion cone.
@@ -129,23 +129,33 @@ if HAVE_NUMBA:
         runs along time: detect (mag <= det_lim) for ``acq_steps`` consecutive steps to
         establish a track, keep it while mag <= trk_lim; engagement requires a track.
         A target detectable at the first step is assumed already tracked (chunk start).
-        ``sun``: (T, 3) unit vectors (ignored unless use_sun)."""
+        ``sun``: (T, 3) unit vectors (ignored unless use_sun).
+        ``vmax``: per-object bound on the range rate (v_sat,max + v_deb,max). Out of range,
+        steps that cannot be back within range yet are skipped: exact, since every skipped
+        step would also be 'far' (mask False, track reset)."""
         T, N = t.shape[0], a0.shape[0]
         mask = np.zeros((T, N), dtype=np.bool_)
         for j in nb.prange(N):
             tracked = False
             run = 0
-            for k in range(T):
+            nxt = 0
+            while nxt < T:
+                k = nxt
+                nxt = k + 1
                 a, O, w, M = _elem_at(j, t[k], a0, adot, raan0, raan_dot, argp0, argp_dot, M0, M_dot)
                 rx, ry, rz, vx, vy, vz = _rv(a, e[j], inc[j], O, w, M)
                 sx, sy, sz = r_sat[k, 0], r_sat[k, 1], r_sat[k, 2]
                 dx, dy, dz = rx - sx, ry - sy, rz - sz
                 d2 = dx * dx + dy * dy + dz * dz
                 rho = math.sqrt(d2)
-                far = rho > (det_range if use_det else rmax)
-                if far:
+                r_far = det_range if use_det else rmax
+                if rho > r_far:
                     tracked = False
                     run = 0
+                    gap = (rho - r_far) / vmax[j] * (1.0 - 1e-9)  # earliest possible re-entry
+                    tk = t[k]
+                    while nxt < T and t[nxt] - tk < gap:
+                        nxt += 1
                     continue
                 # Earth-limb clearance of the segment sat -> target
                 s = -(sx * dx + sy * dy + sz * dz) / d2
@@ -242,31 +252,33 @@ if HAVE_NUMBA:
     @nb.njit(cache=True)
     def mask_runs(mask, min_steps):
         """Contiguous True runs along axis 0 of a (T, N) mask -> (col, start, stop) arrays,
-        sorted by (col, start); runs shorter than ``min_steps`` are dropped."""
+        sorted by (col, start); runs shorter than ``min_steps`` are dropped. Scans rows
+        (contiguous in memory) with an open-run start per column."""
         T, N = mask.shape
+        open_at = np.full(N, -1, np.int64)
         cap = 64
         col = np.empty(cap, np.int64)
         st = np.empty(cap, np.int64)
         sp = np.empty(cap, np.int64)
         n = 0
-        for j in range(N):
-            k = 0
-            while k < T:
-                if mask[k, j]:
-                    s0 = k
-                    while k < T and mask[k, j]:
-                        k += 1
-                    if k - s0 >= min_steps:
+        for k in range(T + 1):
+            for j in range(N):
+                on = k < T and mask[k, j]
+                if on:
+                    if open_at[j] < 0:
+                        open_at[j] = k
+                elif open_at[j] >= 0:
+                    if k - open_at[j] >= min_steps:
                         if n == cap:
                             cap *= 2
                             col2, st2, sp2 = np.empty(cap, np.int64), np.empty(cap, np.int64), np.empty(cap, np.int64)
                             col2[:n], st2[:n], sp2[:n] = col[:n], st[:n], sp[:n]
                             col, st, sp = col2, st2, sp2
-                        col[n], st[n], sp[n] = j, s0, k
+                        col[n], st[n], sp[n] = j, open_at[j], k
                         n += 1
-                else:
-                    k += 1
-        return col[:n], st[:n], sp[:n]
+                    open_at[j] = -1
+        order = np.argsort(col[:n] * (T + 1) + st[:n])
+        return col[:n][order], st[:n][order], sp[:n][order]
 
 
 if HAVE_NUMBA:
