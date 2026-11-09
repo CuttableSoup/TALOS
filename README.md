@@ -294,6 +294,20 @@ raw spectra). Installed at `%LOCALAPPDATA%\NASA\ORDEM 3.2` (or `TALOS_ORDEM_HOME
 - 1-day baseline, ORDEM vs toy (runs/ordem_vs_toy_1d): 9.99 vs 10.17 eng/hr/sat,
   9.73 vs 9.31 m/s Δv/engagement, duty 2.7 % both: still heat-limited, slightly
   better Δv from the SSO-concentrated population.
+- 30-day baseline, ORDEM vs toy (runs/ordem_baseline_30d vs runs/baseline_30d;
+  4 sats, 20 m², μ=1, Dec 21 start):
+  | population | live objects | eng/hr/sat | Δv/eng | duty | removed (30 d) | debris-yr/yr | eng/target | targets ≥10 eng |
+  |---|---|---|---|---|---|---|---|---|
+  | toy 100k | 68.7k | 10.21 | 9.21 | 2.7 % | 138 | 241k | 1.75 | 133 |
+  | ORDEM 2026 | 63.5k | 10.09 | 9.29 | 2.7 % | 335 | 235k | 2.17 | 368 |
+  Same shot rate and Δv, but 2.4× the removals: the SSO-concentrated debris
+  stays near-coplanar with the platforms, so the same objects come back into
+  range and the removal-progress scheduler finishes them (~11 engagements
+  each). Debris-years removed is about equal (finished objects are lower and
+  shorter-lived; removed median start perigee 755 km). No breakup was drawn
+  in the ORDEM run (Poisson, 0.5/yr) and no natural decays (fewer low objects),
+  so net change is −2.4k/yr vs +23k/yr in the toy run, which had one breakup.
+  Removals are still climbing at day 30.
 - Approximations: circular orbits at the altitude seen (no eccentricity
   structure), ORDEM uncertainty files unused, power-law size inside each
   half-decade, background sources drawn from the same table. Material classes
