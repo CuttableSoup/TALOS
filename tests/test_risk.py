@@ -49,3 +49,24 @@ def test_summary_reports_risk_shells():
                                                 "constellation.n_sats": 1, "population.min_lifetime_yr": None,
                                                 "run.duration_s": 600.0, "risk.enabled": False})).summary()
     assert not any(k.startswith("risk_") for k in off)
+
+
+def test_lasered_path_includes_in_run_residence():
+    """With one shell covering every altitude, residence = time alive. Natural path:
+    residence = lifetime. Lasered path: the whole run (in-run accrual) + the remaining life
+    from the last engagement, which is where the final state's epoch sits."""
+    from talos.platform import baseline_platform
+    from talos.population import toy_population
+    from talos.simulation import run_engagements
+
+    pop = toy_population(4000, np.random.default_rng(3), alt_km=(900.0, 1000.0), n_real=4000, areal_density=10.0)
+    res = run_engagements([baseline_platform(950.0)], pop, 1800.0, risk_shells={"all": (0.0, 5e6)})
+    assert len(res.events) > 0 and not res.removed.any()
+    hit = np.array(list(res.lifetime_initial_s))
+    li = np.array([res.lifetime_initial_s[j] for j in hit])
+    lf = np.array([res.lifetime_final_s[j] for j in hit])  # measured from t = 0
+    tm = {e.debris_index: 0.5 * (e.t_start + e.t_stop) for e in res.events}  # last engagement wins
+    tm = np.array([tm[j] for j in hit])
+    assert np.all(np.isfinite(li))
+    np.testing.assert_allclose(res.shell_res_initial_s[:, 0], li, rtol=1e-6)
+    np.testing.assert_allclose(res.shell_res_final_s[:, 0], 1800.0 + (lf - tm), rtol=1e-6)

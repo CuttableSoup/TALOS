@@ -24,7 +24,7 @@ from . import _kernels
 from .constants import R_EARTH, YEAR
 from .debris import DebrisPopulation
 from .engagement import AblationParams, integrate_burst, pulse_times
-from .lifetime import apply_dv, is_removed, orbital_lifetime
+from .lifetime import apply_dv, is_removed, orbital_lifetime, shell_fraction
 from .propagator import propagate
 from .platform import Platform
 from .resources import ResourceState
@@ -70,7 +70,8 @@ class SimResult:
     env_stats: dict = field(default_factory=dict)  # eclipse / heater / brownout, mean per platform
     pop_stats: dict = field(default_factory=dict)  # sources / sinks (PopulationDynamics)
     # risk transfer: time [s] each engaged object spends in each protected shell,
-    # natural path (from its initial state) vs after the laser (from its final state)
+    # natural path (from its initial state) vs the lasered path: in-run residence (accrued daily,
+    # elements held between accruals) + residence after its final state
     shell_names: tuple[str, ...] = ()
     shell_res_initial_s: np.ndarray | None = field(default=None, repr=False)  # (n_hit, k)
     shell_res_final_s: np.ndarray | None = field(default=None, repr=False)
@@ -173,8 +174,29 @@ def run_engagements(
     fire_time = {p.name: 0.0 for p in platforms}
     events: list[EngagementEvent] = []
 
+    names = tuple(risk_shells) if risk_shells else ()
+    shells = np.array([risk_shells[n] for n in names], float) if names else None
+    res_sim = np.zeros((len(pop), len(names)))  # shell residence during the run [s]
+    res_t = 0.0  # residence accumulated up to this sim time
+
+    def accrue(t_now: float) -> None:
+        """Shell residence of live objects over [res_t, t_now], elements held at their current values."""
+        nonlocal res_t, res_sim
+        if shells is None or t_now <= res_t:
+            return
+        if len(res_sim) < len(pop):
+            res_sim = np.vstack([res_sim, np.zeros((len(pop) - len(res_sim), len(names)))])
+        el = pop.elements
+        near = np.flatnonzero(~(removed | decayed) & (el.rp - R_EARTH < shells[:, 1].max())
+                              & (el.a * (1 + el.e) - R_EARTH >= shells[:, 0].min()))
+        if len(near):
+            res_sim[near] += shell_fraction(el.a[near], el.e[near], shells) * (t_now - res_t)
+        res_t = t_now
+
     for c0 in np.arange(0.0, duration_s, chunk_s):
         t = c0 + np.arange(0.0, min(chunk_s, duration_s - c0), dt)
+        if c0 - res_t >= 86400.0 - 1e-6:
+            accrue(float(c0))
         engaged: set[int] = set()
         sun_hat = env.sun_hat(t) if env is not None else None
         if dynamics is not None and dynamics.due(float(c0)):
@@ -266,11 +288,10 @@ def run_engagements(
         if on_chunk is not None:
             on_chunk(float(min(c0 + chunk_s, duration_s)), events, removed, decayed)
 
+    accrue(float(duration_s))
     max_duty = float(np.mean([s.steady_state_max_duty() for s in state.values()]))
     hit = np.array(sorted({e.debris_index for e in events}), dtype=int)
     li, lf = {}, {}
-    names = tuple(risk_shells) if risk_shells else ()
-    shells = np.array([risk_shells[n] for n in names], float) if names else None
     res_i = res_f = np.zeros((len(hit), len(names)))
     if len(hit):
         # both lifetimes measured from each object's initial epoch
@@ -281,6 +302,7 @@ def run_engagements(
         L1 = orbital_lifetime(e1.a, e1.e, B, t0_s=t1, shells_m=shells)
         if shells is not None:
             (L0, res_i), (L1, res_f) = L0, L1
+            res_f = res_f + res_sim[hit]  # lasered path = in-run residence + after the final state
         li = dict(zip(hit.tolist(), np.atleast_1d(L0).tolist()))
         lf = dict(zip(hit.tolist(), (np.atleast_1d(L1) + t1 - t0).tolist()))
     sts = list(state.values())
