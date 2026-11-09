@@ -6,3 +6,5 @@ dist/
 .venv/
 runs/
 *.parquet
+src/talos/data/ordem_*.npz
+*.zip

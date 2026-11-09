@@ -70,14 +70,15 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 
 ## Admin to-dos
 - Register: ESA SDUP (MASTER, DRAMA), Space-Track.org
-- Request NASA DAS/ORDEM via software usage agreement (slow)
+- ~~Request NASA DAS/ORDEM~~ done 2026-11: ORDEM 3.2 and DAS 3.2.7 installed locally (NASA SUA; not in git)
 - Consider contacting WVU (Hang Woon Lee lab) re: code
 
 ## Status
 - Done (prototype): modules 2–9 — propagator, platform/ATP, screening (coarse
   sieve + fine gates), engagement physics, scheduler (removal-progress scoring,
   batched prediction), lifetime/removal, power/thermal state machine, metrics,
-  parallel sweep driver. Population is still a toy sampler (module 1 pending MASTER).
+  parallel sweep driver. Population: NASA ORDEM 3.2 sampler (module 1; MASTER
+  cross-check pending); the uniform toy sampler remains as `population.kind = "toy"`.
 - Scenario values live in `config/baseline.toml` (units in key suffixes, basis
   tags [sourced]/[derived]/[pick]/[guess]); `talos.config.load_scenario(path,
   overrides)` → `run_scenario(sc)`. Sweeps: `RunConfig(name, config=None,
@@ -108,7 +109,7 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 | Cm peak | `AblationParams.cm` | 50 N/MW (sweep 25–100) | **sourced** range; only ~100 ps Al point is ≤30 N/MW, IR not UV |
 | η₁ | `AblationParams.eta1_mean/kappa` | Beta, mean 0.3, κ=10 | mean **sourced**; spread a guess |
 | Δv off-axis angle | `AblationParams.off_axis_*` | N(45°, 15°) clipped [0, 90°] | centre **sourced**; spread a guess |
-| Debris count in band | `toy_population(n_real=)` | 100k (Phipps) | MASTER all-LEO 1–10 cm ≈ 1.2M; 600–1000 km share unsourced |
+| Debris count in band | `population.kind = "ordem"` | 75.9k 1–10 cm, 600–1000 km (ORDEM 3.2, 2026) | **sourced** (ORDEM); inclination mix is a fit to ORDEM flux spectra; toy: 100k (Phipps) |
 | Settle / retarget | `ATPConfig.settle_s` | 5 s, not overlapped | guess (conservative) |
 | Min burst | `ResourceConfig.min_burst_s` | 5 s | guess |
 | Wall-plug (elec → 355 nm) | `ResourceConfig.wallplug_eff` | 0.10 (range 0.04–0.17) | **sourced** chain 0.9×0.55×0.45×0.40; ATLAS flight 8.2 % at 532 nm |
@@ -272,6 +273,35 @@ Worth adding:
 Validation still owed: gate 2 (Pieters & Noomen reproduction), gate 5
 (orekit / STELA). MASTER also needs ESA SDUP registration.
 
+## ORDEM population (2026-11)
+`talos.ordem` runs ORDEM 3.2 spacecraft mode for circular orbits (600–1000 km
+every 20 km × 10 spacecraft inclinations), keeps the flux per relative-velocity
+bin for each material class and half-decade size, and fits non-negative
+inclination-bin counts (5° bins) that reproduce those spectra at every
+spacecraft inclination at once. The forward model is the single-inclination
+density 1/(2π²r²√(cos²φ − cos²i)) integrated over debris heading (exact vs the
+isotropic analytic flux). Build: `python scripts/build_ordem_table.py` (~40 min,
+writes the gitignored `src/talos/data/ordem_<year>.npz`; `--refit` reuses the
+raw spectra). Installed at `%LOCALAPPDATA%\NASA\ORDEM 3.2` (or `TALOS_ORDEM_HOME`);
+`ORDEM32.exe` must run from the install root.
+- 2026, 1–10 cm, 600–1000 km: 75.9k objects (toy guess was 100k). MD 64 %,
+  NaK 22 % (RORSAT droplets, 60–70°), HD 10 %, LD 5 %; 1–3.16 cm 86 %.
+  Inclination: 95–105° (SSO) 37 %, 60–85° ~47 %. Altitude peak 840–900 km.
+- Check: fitted density / ORDEM density along each test orbit is 0.95–1.04
+  for spacecraft inclinations ≥ 30°; equatorial orbits are 8–20 % low (eccentric
+  debris counted as circular). Spectral fit residual 7–13 % by material.
+- With μ = 1 the 1-yr lifetime filter keeps 63.5k of the 75.9k.
+- 1-day baseline, ORDEM vs toy (runs/ordem_vs_toy_1d): 9.99 vs 10.17 eng/hr/sat,
+  9.73 vs 9.31 m/s Δv/engagement, duty 2.7 % both: still heat-limited, slightly
+  better Δv from the SSO-concentrated population.
+- Approximations: circular orbits at the altitude seen (no eccentricity
+  structure), ORDEM uncertainty files unused, power-law size inside each
+  half-decade, background sources drawn from the same table. Material classes
+  give an optional μ = (2/3)ρd sphere model (`areal_density_model = "sphere"`),
+  default stays fixed μ.
+- Licence: ORDEM is NASA SUA software; tables are derived data and stay out of git.
+
 ## Next step
-Detection & tracking (roadmap 1); longer runs / steady-state; MASTER population
-(module 1).
+30-day ORDEM baseline; DAS 3.2.7 lifetime cross-check (gate 5, `Fortran.dll`
+LIFEDWELL via ctypes: first look at 600/800/1000 km, A/m = 1, shows TALOS
+−12 % / −19 % / +18 % vs DAS); detection & tracking; MASTER cross-check.

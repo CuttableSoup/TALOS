@@ -59,7 +59,8 @@ def _init_worker(threads: int) -> None:
 
 def _warm_jit() -> None:
     """Compile/load the numba kernels once in the parent so workers hit the cache."""
-    run_one(RunConfig("_warm", overrides={"constellation.n_sats": 1, "population.n_real": 2000,
+    run_one(RunConfig("_warm", overrides={"constellation.n_sats": 1, "population.kind": "toy",
+                                          "population.n_real": 2000,
                                           "run.duration_s": 120.0, "population.min_lifetime_yr": None}))
 
 

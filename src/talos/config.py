@@ -53,8 +53,12 @@ class ConstellationConfig:
 
 @dataclass(frozen=True)
 class PopulationConfig:
-    kind: str = "toy"
-    n_real: float = 1.0e5
+    kind: str = "toy"  # toy | ordem
+    n_real: float = 1.0e5  # toy only; for "ordem" the count comes from the table
+    n_samples: int | None = None  # None -> full density (one sample per real object)
+    ordem_year: int | None = None  # None -> the epoch's year
+    materials: tuple[str, ...] | None = None  # ORDEM classes (NK LD MD HD IN); None -> all
+    areal_density_model: str = "fixed"  # fixed | sphere (ORDEM material density; ordem only)
     alt_km: tuple[float, float] = (600.0, 1000.0)
     areal_density: float = 1.0
     min_lifetime_yr: float | None = 1.0
@@ -213,17 +217,37 @@ def build(sc: Scenario) -> Built:
     plats = baseline_constellation(sc.constellation.n_sats, sc.constellation.altitudes_km, raan_rad=raan,
                                    laser=sc.laser, atp=sc.atp, resources=sc.resources)
     p = sc.population
-    if p.kind != "toy":
+    pop_rng = np.random.default_rng(sc.run.seed)
+    source = None
+    if p.kind == "toy":
+        n = int(p.n_samples or p.n_real)
+        pop = toy_population(n, pop_rng, alt_km=p.alt_km, n_real=p.n_real,
+                             areal_density=p.areal_density, min_lifetime_yr=p.min_lifetime_yr,
+                             albedo_median=p.albedo_median, albedo_log_sigma=p.albedo_log_sigma)
+    elif p.kind == "ordem":
+        from .ordem import OrdemTable
+        from .population import ordem_population
+
+        table = OrdemTable.load(int(p.ordem_year or sc.run.epoch.year))
+        p = replace(p, n_real=table.total(p.alt_km, p.materials))
+        n = int(p.n_samples or round(p.n_real))
+        kw = dict(alt_km=p.alt_km, areal_density=p.areal_density, areal_density_model=p.areal_density_model,
+                  materials=p.materials, albedo_median=p.albedo_median, albedo_log_sigma=p.albedo_log_sigma)
+        pop = ordem_population(n, pop_rng, table, min_lifetime_yr=p.min_lifetime_yr, **kw)
+
+        def source(k, rng, t, w):  # background objects: same distribution, at the run's sample weight
+            new = ordem_population(k, rng, table, epoch_s=t, **kw)
+            new.weight[:] = w
+            return new
+    else:
         raise NotImplementedError(f"population kind {p.kind!r}")
-    pop = toy_population(int(p.n_real), np.random.default_rng(sc.run.seed), alt_km=p.alt_km, n_real=p.n_real,
-                         areal_density=p.areal_density, min_lifetime_yr=p.min_lifetime_yr,
-                         albedo_median=p.albedo_median, albedo_log_sigma=p.albedo_log_sigma)
     pl = sc.planner
     planner = (CommitPlanner(plats, sc.ablation, max_committed=pl.max_committed, horizon_s=pl.horizon_s,
                              dt=sc.run.dt_s, min_dv_frac=pl.min_dv_frac, quality=pl.quality, probe_s=pl.probe_s)
                if pl.enabled else None)
     rng = np.random.default_rng(sc.run.seed + 1) if sc.run.stochastic else None
-    dyn = (PopulationDynamics(sc.dynamics, p, float(p.n_real) / int(p.n_real), np.random.default_rng(sc.run.seed + 2))
+    dyn = (PopulationDynamics(sc.dynamics, p, float(p.n_real) / n, np.random.default_rng(sc.run.seed + 2),
+                              source=source)
            if sc.dynamics.enabled else None)
     return Built(plats, pop, sc.ablation, env, planner, rng, make_atmosphere(sc), dyn)
 

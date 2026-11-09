@@ -13,6 +13,7 @@ dependencies = ["numpy>=1.24"]
 tle = ["sgp4>=2.22"]
 atmos = ["pymsis"]
 sweep = ["pandas", "pyarrow"]
+ordem = ["scipy"]  # build-time only (scripts/build_ordem_table.py)
 fast = ["numba>=0.61"]
 dev = ["pytest>=7"]
 

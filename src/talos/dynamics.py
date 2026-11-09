@@ -58,8 +58,9 @@ def _objects(el: KeplerElements, rng, t: float, weight: float, areal_density: fl
     )
 
 
-def breakup_elements(rng, n: int, dv_sigma: float, alt_km=(600.0, 1000.0)) -> KeplerElements:
-    parent = toy_elements(1, rng, alt_km)
+def breakup_elements(rng, n: int, dv_sigma: float, alt_km=(600.0, 1000.0),
+                     parent: KeplerElements | None = None) -> KeplerElements:
+    parent = toy_elements(1, rng, alt_km) if parent is None else parent
     r, v = elements_to_rv(parent)
     v_frag = v + rng.normal(0.0, dv_sigma, (n, 3))
     el = rv_to_elements(np.broadcast_to(r, (n, 3)).copy(), v_frag)
@@ -68,11 +69,15 @@ def breakup_elements(rng, n: int, dv_sigma: float, alt_km=(600.0, 1000.0)) -> Ke
 
 
 class PopulationDynamics:
-    def __init__(self, cfg: DynamicsConfig, pop_cfg, weight: float, rng: np.random.Generator) -> None:
+    def __init__(self, cfg: DynamicsConfig, pop_cfg, weight: float, rng: np.random.Generator,
+                 source=None) -> None:
+        """``source(n, rng, t, weight) -> DebrisPopulation`` draws background objects (and breakup
+        parent orbits) from the initial population's distribution; None -> the toy distribution."""
         self.cfg = cfg
         self.pop_cfg = pop_cfg
         self.weight = weight
         self.rng = rng
+        self.source = source
         self.next_update = cfg.update_s
         self.stats = {"natural_decays": 0, "added_background": 0, "added_breakup": 0, "breakups": 0}
 
@@ -100,12 +105,14 @@ class PopulationDynamics:
         new = []
         n_bg = rng.poisson(self.cfg.background_frac_per_yr * pc.n_real * dt / YEAR / w)
         if n_bg:
-            new.append(_objects(toy_elements(n_bg, rng, pc.alt_km), rng, t, w, pc.areal_density,
+            new.append(self.source(n_bg, rng, t, w) if self.source is not None else
+                       _objects(toy_elements(n_bg, rng, pc.alt_km), rng, t, w, pc.areal_density,
                                 pc.albedo_median, pc.albedo_log_sigma))
             self.stats["added_background"] += n_bg
         for _ in range(rng.poisson(self.cfg.breakup_rate_per_yr * dt / YEAR)):
+            parent = self.source(1, rng, t, w).elements if self.source is not None else None
             el = breakup_elements(rng, max(1, int(round(self.cfg.breakup_fragments / w))),
-                                  self.cfg.breakup_dv_sigma_m_s, pc.alt_km)
+                                  self.cfg.breakup_dv_sigma_m_s, pc.alt_km, parent=parent)
             new.append(_objects(el, rng, t, w, pc.areal_density, pc.albedo_median, pc.albedo_log_sigma))
             self.stats["breakups"] += 1
             self.stats["added_breakup"] += len(el)

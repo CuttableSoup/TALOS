@@ -4,7 +4,8 @@ from talos.sweep import RunConfig, readme_matrix, run_sweep
 
 
 def tiny(name, **kw):
-    return RunConfig(name, overrides={"constellation.n_sats": 1, "population.n_real": 3000,
+    return RunConfig(name, overrides={"constellation.n_sats": 1, "population.kind": "toy",
+                                      "population.n_real": 3000,
                                       "run.duration_s": 900.0, "population.min_lifetime_yr": None, **kw})
 
 
