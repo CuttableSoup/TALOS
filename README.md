@@ -311,6 +311,21 @@ raw spectra). Installed at `%LOCALAPPDATA%\NASA\ORDEM 3.2` (or `TALOS_ORDEM_HOME
   in the ORDEM run (Poisson, 0.5/yr) and no natural decays (fewer low objects),
   so net change is −2.4k/yr vs +23k/yr in the toy run, which had one breakup.
   Removals are still climbing at day 30.
+- Areal density from the NASA standard breakup model (`areal_density_model =
+  "sbm"`, now the baseline): fragment log10(A/m) ~ N(μ_soc(λc), σ_soc(λc))
+  (Johnson et al. 2001 small-object distribution, ±3σ clip), μ = 1/(A/m);
+  NaK droplets are solid spheres (μ = ⅔ρd, ~6–60 kg/m²). Population median μ
+  4.45 kg/m² (10–90 %: 0.95–12.9) vs the old fixed 1.0. 30-day baseline
+  (runs/compare_mu_model vs runs/ordem_baseline_30d):
+  | μ model | eng/hr/sat | Δv/eng | removed (30 d) | debris-yr/yr | eng/target | max hits |
+  |---|---|---|---|---|---|---|
+  | fixed 1.0 | 10.09 | 9.29 | 335 | 235k | 2.17 | — |
+  | SBM | 10.10 | 5.66 | 250 | 171k | 2.66 | 41 |
+  Only −25 % removals for −39 % Δv because the scheduler finishes the light
+  tail: removed objects have median μ 0.54 (10–90 %: 0.23–1.35), 82 % have
+  μ < 1 vs 11 % of the population, median size 1.4 cm. Removal counts therefore
+  hinge on the SBM high-A/m tail (MLI/paint-like flakes) and its clip; targets
+  overall have median μ 1.8.
 - Approximations: circular orbits at the altitude seen (no eccentricity
   structure), ORDEM uncertainty files unused, power-law size inside each
   half-decade, background sources drawn from the same table. Material classes
