@@ -84,3 +84,32 @@ def test_advance_backwards_raises():
     s.advance(10.0)
     with pytest.raises(ValueError):
         s.advance(5.0)
+
+
+def test_hardware_life_counters():
+    rs = ResourceState(ResourceConfig(), LaserConfig())
+    cap = rs.cfg.battery_capacity_j
+    de = rs.p_elec - rs.p_charge  # battery draw while firing, fully lit
+    rs.fire(10.0)
+    rs.advance(rs.t + 3600.0)  # recharges; no discharge while idle in sunlight
+    rs.fire(5.0)
+    assert rs.bursts == 2
+    assert rs.discharge_j == pytest.approx(15.0 * de)
+    assert rs.burst_dod_max == pytest.approx(10.0 * de / cap)
+    assert rs.burst_dod_sum == pytest.approx(15.0 * de / cap)
+
+
+def test_summary_reports_hardware_life():
+    from talos.platform import baseline_platform
+    from talos.population import toy_population
+    from talos.simulation import run_engagements
+
+    sat = baseline_platform(800.0)
+    pop = toy_population(3000, np.random.default_rng(1), n_real=3000)
+    res = run_engagements([sat], pop, 1800.0)
+    s = res.summary()
+    yr = 365.25 * 86400.0 / 1800.0
+    assert s["bursts_per_sat_per_yr"] == pytest.approx(len(res.events) * yr)
+    assert s["laser_shots_per_sat_per_yr"] == pytest.approx(sum(e.n_pulses for e in res.events) * yr)
+    assert 0.0 < s["battery_dod_mean"] <= s["battery_dod_max"] <= 1.0
+    assert s["battery_efc_per_sat_per_yr"] > 0

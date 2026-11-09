@@ -189,3 +189,55 @@ def readme_matrix(base: RunConfig = RunConfig(name="base"), **axes_override) -> 
             kw.setdefault("population.areal_density_model", "fixed")
         out.append(RunConfig(name=tag, config=base.config, overrides={**base.overrides, **kw}))
     return out
+
+
+# Uncertain inputs (README Placeholders): key -> (lo, hi[, "log"]). Ranges are the
+# sourced ranges where the table gives one, otherwise picks around the baseline.
+UNCERTAIN_INPUTS: dict[str, tuple] = {
+    "laser.eta2": (0.30, 0.67),
+    "ablation.cm_n_per_mw": (25.0, 100.0, "log"),
+    "ablation.eta1_mean": (0.2, 0.4),  # pick around the sourced 0.3
+    "ablation.off_axis_mean_deg": (30.0, 60.0),  # pick around the sourced 45
+    "resources.wallplug_eff": (0.04, 0.17, "log"),
+    "atp.sun_exclusion_deg": (30.0, 45.0),
+    "atp.settle_s": (2.0, 10.0),  # guess
+}
+
+
+def lhs_matrix(n: int, ranges: Mapping[str, tuple] | None = None, base: RunConfig = RunConfig(name="lhs"),
+               seed: int = 0, vary_seed: bool = True) -> list[RunConfig]:
+    """Latin-hypercube sample of ``ranges`` (default UNCERTAIN_INPUTS; roadmap 7): n runs,
+    each axis cut into n equal-probability strata (log-uniform for "log" axes), one sample
+    per stratum, strata shuffled independently per axis. ``vary_seed`` also gives every run
+    its own ``run.seed`` so the bands include Monte Carlo noise."""
+    import numpy as np
+
+    ranges = dict(UNCERTAIN_INPUTS if ranges is None else ranges)
+    rng = np.random.default_rng(seed)
+    cols = {}
+    for key, spec in ranges.items():
+        lo, hi, *kind = spec
+        u = (rng.permutation(n) + rng.uniform(size=n)) / n
+        cols[key] = (lo * (hi / lo) ** u) if kind == ["log"] else lo + (hi - lo) * u
+    out = []
+    for j in range(n):
+        ovr = {**base.overrides, **{k: float(v[j]) for k, v in cols.items()}}
+        if vary_seed:
+            ovr["run.seed"] = seed * 100003 + j
+        out.append(RunConfig(name=f"{base.name}_{j:03d}", config=base.config, overrides=ovr))
+    return out
+
+
+def uncertainty_bands(df, metrics: list[str], q=(0.05, 0.5, 0.95)):
+    """Quantiles of ``metrics`` over an LHS sweep, plus each input's Spearman rank
+    correlation with each metric (which inputs drive the spread)."""
+    import pandas as pd
+
+    inputs = [c for c in df.columns if c.startswith("ovr.") and c != "ovr.run.seed"
+              and df[c].nunique() > 1 and pd.api.types.is_numeric_dtype(df[c])]
+    bands = df[metrics].quantile(list(q)).T
+    bands.columns = [f"q{int(round(x * 100)):02d}" for x in q]
+    rank = df[inputs + metrics].rank()
+    corr = rank.corr().loc[[c for c in inputs], metrics]
+    corr.index = [c[4:] for c in corr.index]
+    return bands, corr

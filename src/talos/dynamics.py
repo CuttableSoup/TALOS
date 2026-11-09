@@ -6,9 +6,16 @@ Applied every ``update_s`` of sim time to the whole population:
   J2 + orbit-averaged drag in the installed atmosphere (solar-cycle aware) and
   re-epoched there. Objects meeting the removal criterion (perigee < 200 km or
   lifetime < 30 d) count as ``decayed`` — gone, but not credited to the laser.
-* Background source: new objects at ``background_frac_per_yr`` x n_real per
-  year (Poisson), drawn from the same toy distribution as the initial population
-  (launch debris, small fragmentations, MLI/paint shedding).
+* Background source, ``source_mode``:
+  - "fraction": new objects at ``background_frac_per_yr`` x n_real per year
+    (Poisson), drawn from the initial population's distribution (launch debris,
+    small fragmentations, MLI/paint shedding).
+  - "replace_decays": every natural decay of an object the laser never engaged is
+    replaced by a statistically identical object (its initial size, mu, albedo,
+    a, e, i; fresh RAAN / argp / M; epoch now). This holds the un-lasered
+    population in steady state, class by class (short-lived low-mu objects are
+    replenished as fast as they decay), so laser removals are the only net change
+    apart from breakups. Assumption, not a sourced source term.
 * Breakups: Poisson events at ``breakup_rate_per_yr``; each puts
   ``breakup_fragments`` 1-10 cm fragments around a random parent orbit in the
   band with an isotropic Gaussian dv (``breakup_dv_sigma_m_s`` per axis).
@@ -34,7 +41,8 @@ from .lifetime import decay_to, is_removed
 class DynamicsConfig:
     enabled: bool = True
     update_s: float = 86400.0
-    background_frac_per_yr: float = 0.02  # PICK: new objects / yr as a fraction of n_real
+    source_mode: str = "replace_decays"  # "replace_decays" | "fraction"
+    background_frac_per_yr: float = 0.02  # PICK ("fraction" mode): new objects / yr as a fraction of n_real
     breakup_rate_per_yr: float = 0.5  # PICK: breakups / yr in the band
     breakup_fragments: int = 2000  # PICK: 1-10 cm fragments per breakup
     breakup_dv_sigma_m_s: float = 50.0  # PICK: per-axis fragment dv spread
@@ -79,14 +87,21 @@ class PopulationDynamics:
         self.rng = rng
         self.source = source
         self.next_update = cfg.update_s
-        self.stats = {"natural_decays": 0, "added_background": 0, "added_breakup": 0, "breakups": 0}
+        if cfg.source_mode not in ("fraction", "replace_decays"):
+            raise ValueError(f"source_mode {cfg.source_mode!r}: expected fraction or replace_decays")
+        self.stats = {"natural_decays": 0, "added_background": 0, "added_breakup": 0, "breakups": 0,
+                      "replaced_decays": 0}
 
     def due(self, t: float) -> bool:
         return self.cfg.enabled and t >= self.next_update - 1e-9
 
-    def step(self, pop: DebrisPopulation, gone: np.ndarray, t: float) -> tuple[DebrisPopulation, np.ndarray]:
+    def step(self, pop: DebrisPopulation, gone: np.ndarray, t: float,
+             initial: DebrisPopulation | None = None,
+             engaged: np.ndarray | None = None) -> tuple[DebrisPopulation, np.ndarray]:
         """Decay + re-epoch live objects to ``t`` and add new ones. Returns (population,
-        bool mask of objects that decayed naturally in this step, sized to the new population)."""
+        bool mask of objects that decayed naturally in this step, sized to the new population).
+        "replace_decays" needs ``initial`` (each object's state when it entered the run) and
+        ``engaged`` (bool, objects the laser has hit: their decay is not replaced)."""
         dt = t - (self.next_update - self.cfg.update_s)
         self.next_update += self.cfg.update_s
         live = np.flatnonzero(~gone)
@@ -103,7 +118,20 @@ class PopulationDynamics:
             self.stats["natural_decays"] += int(decayed.sum())
         pc, rng, w = self.pop_cfg, self.rng, self.weight
         new = []
-        n_bg = rng.poisson(self.cfg.background_frac_per_yr * pc.n_real * dt / YEAR / w)
+        if self.cfg.source_mode == "replace_decays":
+            if initial is None:
+                raise ValueError("source_mode replace_decays needs the initial population")
+            j = np.flatnonzero(decayed if engaged is None else decayed & ~engaged[:len(decayed)])
+            if len(j):
+                rep = initial.subset(j)
+                rep.elements = KeplerElements(a=rep.elements.a.copy(), e=rep.elements.e.copy(),
+                                              i=rep.elements.i.copy(), raan=rng.uniform(0, 2 * np.pi, len(j)),
+                                              argp=rng.uniform(0, 2 * np.pi, len(j)),
+                                              M=rng.uniform(0, 2 * np.pi, len(j)))
+                rep.epoch_s = np.full(len(j), float(t))
+                new.append(rep)
+                self.stats["replaced_decays"] += len(j)
+        n_bg = rng.poisson(self.cfg.background_frac_per_yr * pc.n_real * dt / YEAR / w)             if self.cfg.source_mode == "fraction" else 0
         if n_bg:
             new.append(self.source(n_bg, rng, t, w) if self.source is not None else
                        _objects(toy_elements(n_bg, rng, pc.alt_km), rng, t, w, pc.areal_density,

@@ -63,6 +63,20 @@ def decay_rates(a, e, ballistic_coeff, n_quad: int = 64, t_s=0.0) -> tuple[np.nd
     return da_dE.mean(-1) * n, de_dE.mean(-1) * n
 
 
+def shell_fraction(a, e, shells_m, n_quad: int = 64) -> np.ndarray:
+    """Fraction of each orbit's time spent at altitudes inside each shell.
+    ``shells_m``: (k, 2) [lo, hi] altitude bands [m]. Returns shape (n, k).
+    Time-weighted quadrature over eccentric anomaly (dM = (1 - e cos E) dE)."""
+    a = np.asarray(a, float)[:, None]
+    e = np.asarray(e, float)[:, None]
+    cE = np.cos(np.linspace(0.0, 2 * np.pi, n_quad, endpoint=False))
+    alt = a * (1 - e * cE) - R_EARTH  # (n, q)
+    w = 1 - e * cE
+    sh = np.asarray(shells_m, float)
+    inside = (alt[:, None, :] >= sh[None, :, 0, None]) & (alt[:, None, :] < sh[None, :, 1, None])
+    return (inside * w[:, None, :]).sum(-1) / w.sum(-1)[:, None]
+
+
 def orbital_lifetime(
     a,
     e,
@@ -72,8 +86,12 @@ def orbital_lifetime(
     step_frac: float = 0.05,
     max_step_s: float = 30 * DAY,
     t0_s=0.0,
-) -> np.ndarray:
+    shells_m=None,
+):
     """Time [s] until perigee altitude drops below ``reentry_alt_m``; inf if > ``max_s``.
+
+    With ``shells_m`` ((k, 2) altitude bands [m]) also returns the time [s] each object
+    spends inside each band until re-entry or ``max_s``, shape (n, k): (lifetime, residence).
 
     ``t0_s`` (scalar or per object) is the sim time the elements refer to; the
     solar-cycle atmosphere is evaluated at t0_s + elapsed.
@@ -85,6 +103,7 @@ def orbital_lifetime(
     life = np.full_like(a, np.inf)
     alive = a * (1 - e) - R_EARTH >= reentry_alt_m
     life[~alive] = 0.0
+    res = None if shells_m is None else np.zeros((len(a), len(shells_m)))
     while np.any(alive):
         idx = np.flatnonzero(alive)
         ai, ei, Bi, ti = a[idx], e[idx], B[idx], t0[idx] + t[idx]
@@ -92,6 +111,10 @@ def orbital_lifetime(
         drp = da * (1 - ei) - ai * de
         H = _scale_height_m(ai * (1 - ei) - R_EARTH, ti)
         dt = np.clip(step_frac * H / np.maximum(-drp, 1e-30), 1.0, max_step_s)
+        if res is not None:  # residence over this step (8 sub-step midpoints, Euler path), capped at max_s
+            f = np.mean([shell_fraction(ai + da * dt * u, np.maximum(ei + de * dt * u, 0.0), shells_m)
+                         for u in (np.arange(8) + 0.5) / 8], axis=0)
+            res[idx] += f * np.minimum(dt, np.maximum(max_s - t[idx], 0.0))[:, None]
         da2, de2 = decay_rates(ai + da * dt, np.maximum(ei + de * dt, 0.0), Bi, t_s=ti + dt)
         a[idx] = ai + 0.5 * (da + da2) * dt
         e[idx] = np.maximum(ei + 0.5 * (de + de2) * dt, 0.0)
@@ -100,6 +123,8 @@ def orbital_lifetime(
         life[idx[down]] = t[idx[down]]
         alive[idx[down]] = False
         alive[idx[t[idx] > max_s]] = False
+    if res is not None:
+        return (float(life[0]), res[0]) if scalar else (life, res)
     return float(life[0]) if scalar else life
 
 

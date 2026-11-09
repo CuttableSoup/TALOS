@@ -68,6 +68,11 @@ class SimResult:
     planner_stats: dict = field(default_factory=dict)
     env_stats: dict = field(default_factory=dict)  # eclipse / heater / brownout, mean per platform
     pop_stats: dict = field(default_factory=dict)  # sources / sinks (PopulationDynamics)
+    # risk transfer: time [s] each engaged object spends in each protected shell,
+    # natural path (from its initial state) vs after the laser (from its final state)
+    shell_names: tuple[str, ...] = ()
+    shell_res_initial_s: np.ndarray | None = field(default=None, repr=False)  # (n_hit, k)
+    shell_res_final_s: np.ndarray | None = field(default=None, repr=False)
 
     def records(self) -> list[dict]:
         return [asdict(e) for e in self.events]
@@ -87,6 +92,12 @@ class SimResult:
         dyears = sum(min(li[j], horizon_s) - min(lf[j], horizon_s) for j in li) / YEAR
         useful = [e for e in self.events if e.n_fired > 0 and e.dv_retrograde > 0]
         hours = self.duration_s / 3600.0
+        risk = {}
+        for k, name in enumerate(self.shell_names):
+            nat = float(self.shell_res_initial_s[:, k].sum()) / YEAR
+            aft = float(self.shell_res_final_s[:, k].sum()) / YEAR
+            risk |= {f"risk_{name}_obj_yr_natural": nat, f"risk_{name}_obj_yr_after": aft,
+                     f"risk_{name}_delta_obj_yr_per_yr": (aft - nat) * YEAR / self.duration_s}
         duty = float(np.mean(list(self.fire_time_s.values()))) / self.duration_s
         return {
             "sim_hours": hours,
@@ -105,6 +116,7 @@ class SimResult:
             "debris_years_removed_per_yr": dyears * YEAR / self.duration_s,
             **self.env_stats,
             **self.pop_stats,
+            **risk,
         }
 
 
@@ -127,12 +139,15 @@ def run_engagements(
     env: "SunEnvironment | None" = None,
     dynamics: "PopulationDynamics | None" = None,
     on_chunk=None,
+    risk_shells: "dict[str, tuple[float, float]] | None" = None,
 ) -> SimResult:
     """Run the engagement loop. With ``planner`` (a CommitPlanner), committed
     objects take priority and fillers that would block a reservation are skipped.
     With ``env`` (a SunEnvironment), platforms follow their illumination timeline
     (array output, eclipse, albedo) and screening applies the sun gates; without
     it platforms are always sunlit and the sun gates are off.
+    ``risk_shells`` ({name: (lo_m, hi_m)} altitude bands) adds shell residence of every
+    engaged object, natural vs after the laser, to the result (risk transfer).
     With ``dynamics`` (a PopulationDynamics), the whole population decays naturally
     and gains new objects every ``dynamics.cfg.update_s``; naturally decayed
     objects leave the screening set but are not credited as removals.
@@ -142,6 +157,7 @@ def run_engagements(
     pop0 = copy.deepcopy(population)  # initial state of every object (incl. ones added later)
     removed = np.zeros(len(pop), dtype=bool)
     decayed = np.zeros(len(pop), dtype=bool)
+    touched = np.zeros(len(pop), dtype=bool)  # engaged at least once
     n_initial = len(pop)
     ready_at = {p.name: 0.0 for p in platforms}
     if env is None:
@@ -162,9 +178,10 @@ def run_engagements(
         sun_hat = env.sun_hat(t) if env is not None else None
         if dynamics is not None and dynamics.due(float(c0)):
             n_old = len(pop)
-            pop, dmask = dynamics.step(pop, removed | decayed, float(c0))
+            pop, dmask = dynamics.step(pop, removed | decayed, float(c0), initial=pop0, engaged=touched)
             grow = np.zeros(len(pop) - n_old, dtype=bool)
             removed, decayed = np.concatenate([removed, grow]), np.concatenate([decayed, grow]) | dmask
+            touched = np.concatenate([touched, grow])
             if len(pop) > n_old:
                 pop0 = pop0.append(pop.subset(np.arange(n_old, len(pop))))
         if planner is not None:
@@ -225,6 +242,7 @@ def run_engagements(
                 pop.epoch_s[j] = tm
                 removed[j] |= gone
                 engaged.add(j)
+                touched[j] = True
                 if planner is not None:
                     planner.record(j, res.dv_retrograde, best.t_stop, pop, removed)
 
@@ -246,19 +264,37 @@ def run_engagements(
     max_duty = float(np.mean([s.steady_state_max_duty() for s in state.values()]))
     hit = np.array(sorted({e.debris_index for e in events}), dtype=int)
     li, lf = {}, {}
+    names = tuple(risk_shells) if risk_shells else ()
+    shells = np.array([risk_shells[n] for n in names], float) if names else None
+    res_i = res_f = np.zeros((len(hit), len(names)))
     if len(hit):
         # both lifetimes measured from each object's initial epoch
         e0, e1 = pop0.elements[hit], pop.elements[hit]
         B = pop.ballistic_coeff[hit]
         t0, t1 = pop0.epoch_s[hit], pop.epoch_s[hit]
-        li = dict(zip(hit.tolist(), np.atleast_1d(orbital_lifetime(e0.a, e0.e, B, t0_s=t0)).tolist()))
-        lf = dict(zip(hit.tolist(), (np.atleast_1d(orbital_lifetime(e1.a, e1.e, B, t0_s=t1)) + t1 - t0).tolist()))
-    env_stats = {}
+        L0 = orbital_lifetime(e0.a, e0.e, B, t0_s=t0, shells_m=shells)
+        L1 = orbital_lifetime(e1.a, e1.e, B, t0_s=t1, shells_m=shells)
+        if shells is not None:
+            (L0, res_i), (L1, res_f) = L0, L1
+        li = dict(zip(hit.tolist(), np.atleast_1d(L0).tolist()))
+        lf = dict(zip(hit.tolist(), (np.atleast_1d(L1) + t1 - t0).tolist()))
+    sts = list(state.values())
+    for s in sts:
+        s.advance(max(s.t, duration_s))
+    yr = YEAR / duration_s
+    shots = {p: 0 for p in fire_time}
+    for e in events:
+        shots[e.platform] += e.n_pulses
+    cap = np.mean([s.cfg.battery_capacity_j for s in sts])
+    env_stats = {  # hardware life (roadmap 4), mean per platform; cycle limits are not modelled
+        "bursts_per_sat_per_yr": float(np.mean([s.bursts for s in sts])) * yr,
+        "laser_shots_per_sat_per_yr": float(np.mean(list(shots.values()))) * yr,
+        "battery_efc_per_sat_per_yr": float(np.mean([s.discharge_j for s in sts])) / cap * yr,
+        "battery_dod_mean": float(sum(s.burst_dod_sum for s in sts) / max(1, sum(s.bursts for s in sts))),
+        "battery_dod_max": float(max(s.burst_dod_max for s in sts)),
+    }
     if env is not None:
-        sts = list(state.values())
-        for s in sts:
-            s.advance(max(s.t, duration_s))
-        env_stats = {
+        env_stats |= {
             "eclipse_fraction": float(np.mean([s.env.eclipse_fraction for s in sts])),
             "heater_kwh_per_day": float(np.mean([s.heater_j for s in sts])) / 3.6e6 * 86400.0 / duration_s,
             "brownout_s": float(np.mean([s.brownout_s for s in sts])),
@@ -275,4 +311,4 @@ def run_engagements(
         }
     return SimResult(events, duration_s, [p.name for p in platforms], fire_time, removed, max_duty, pop, li, lf,
                      dict(planner.stats, committed_now=len(planner.committed)) if planner is not None else {},
-                     env_stats, pop_stats)
+                     env_stats, pop_stats, names, res_i, res_f)

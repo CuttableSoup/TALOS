@@ -77,6 +77,24 @@ class PlannerConfig:
 
 
 @dataclass(frozen=True)
+class RiskConfig:
+    """Risk transfer (roadmap 6): time engaged objects spend inside protected altitude
+    shells after the laser vs on their natural decay. Shell bounds are PICKS."""
+
+    enabled: bool = True
+    shell_names: tuple[str, ...] = ("crewed", "starlink")
+    shell_lo_m: tuple[float, ...] = (370e3, 530e3)
+    shell_hi_m: tuple[float, ...] = (430e3, 575e3)
+
+    def shells(self) -> dict[str, tuple[float, float]] | None:
+        if not self.enabled or not self.shell_names:
+            return None
+        if not len(self.shell_names) == len(self.shell_lo_m) == len(self.shell_hi_m):
+            raise ValueError("[risk] shell_names / shell_lo / shell_hi lengths differ")
+        return {n: (lo, hi) for n, lo, hi in zip(self.shell_names, self.shell_lo_m, self.shell_hi_m)}
+
+
+@dataclass(frozen=True)
 class Scenario:
     run: RunSettings = field(default_factory=RunSettings)
     constellation: ConstellationConfig = field(default_factory=ConstellationConfig)
@@ -89,6 +107,7 @@ class Scenario:
     sun: SunConfig = field(default_factory=SunConfig)
     atmosphere: AtmosphereConfig = field(default_factory=AtmosphereConfig)
     dynamics: DynamicsConfig = field(default_factory=DynamicsConfig)
+    risk: RiskConfig = field(default_factory=RiskConfig)
 
 
 # suffix -> (SI suffix, converter); longest suffix wins
@@ -130,6 +149,8 @@ def _resolve(cls, key: str, value):
             si, conv = _SUFFIXES[suf]
             k = key[: -len(suf)] + si
             if k in names:
+                if isinstance(value, (list, tuple)):
+                    return k, tuple(float(x) for x in conv(np.asarray(value, float)))
                 return k, (None if value is None else conv(value))
     raise KeyError(f"unknown key {key!r} for [{cls.__name__}]; fields: {sorted(names)}")
 
@@ -272,6 +293,6 @@ def run_scenario(sc: Scenario, on_chunk=None):
         return run_engagements(b.platforms, b.population, sc.run.duration_s, dt=sc.run.dt_s,
                                chunk_s=sc.run.chunk_s, params=b.params, rng=b.rng, score=sc.run.score,
                                planner=b.planner, env=b.env, dynamics=b.dynamics,
-                               on_chunk=on_chunk)
+                               on_chunk=on_chunk, risk_shells=sc.risk.shells())
     finally:
         set_atmosphere(prev)

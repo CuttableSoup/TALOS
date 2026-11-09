@@ -65,3 +65,30 @@ def test_run_monitor_logs_and_checkpoints(tmp_path):
     assert lines[-1].split()[2:6] == ["1", "1", "1", "1"]  # events, useful, removed, live
     part = pd.read_parquet(tmp_path / "events" / "m.partial.parquet")
     assert len(part) == 1 and part["run"].iloc[0] == "m"
+
+
+def test_lhs_matrix_stratifies_each_axis():
+    import numpy as np
+
+    from talos.sweep import lhs_matrix
+
+    m = lhs_matrix(20, {"laser.eta2": (0.3, 0.6), "ablation.cm_n_per_mw": (25.0, 100.0, "log")}, seed=1)
+    assert len(m) == 20 and len({c.name for c in m}) == 20 and len({c.overrides["run.seed"] for c in m}) == 20
+    eta = np.array([c.overrides["laser.eta2"] for c in m])
+    cm = np.array([c.overrides["ablation.cm_n_per_mw"] for c in m])
+    assert sorted(np.floor((eta - 0.3) / 0.3 * 20).astype(int)) == list(range(20))  # one per stratum
+    assert sorted(np.floor(np.log(cm / 25) / np.log(4) * 20).astype(int)) == list(range(20))
+    assert m[0].scenario().laser.eta2 == eta[0]
+
+
+def test_uncertainty_bands_rank_correlation():
+    import numpy as np
+
+    from talos.sweep import uncertainty_bands
+
+    x = np.linspace(0, 1, 50)
+    df = pd.DataFrame({"ovr.a": x, "ovr.b": np.random.default_rng(0).permutation(x), "ovr.run.seed": range(50),
+                       "m": 3 * x + 1})
+    bands, corr = uncertainty_bands(df, ["m"])
+    assert bands.loc["m", "q50"] == np.median(3 * x + 1)
+    assert corr.loc["a", "m"] == 1.0 and abs(corr.loc["b", "m"]) < 0.5 and "run.seed" not in corr.index

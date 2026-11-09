@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from talos.atmosphere import AtmosphereConfig
-from talos.config import Scenario, load_scenario, scenario_dict
+from talos.config import RiskConfig, Scenario, load_scenario, scenario_dict
 from talos.dynamics import DynamicsConfig
 from talos.engagement import AblationParams
 from talos.platform import ATPConfig, LaserConfig, ResourceConfig
@@ -16,7 +16,8 @@ def test_baseline_toml_matches_dataclass_defaults():
     sc = load_scenario()
     for got, ref in ((sc.laser, LaserConfig()), (sc.atp, ATPConfig()), (sc.resources, ResourceConfig()),
                      (sc.ablation, AblationParams()), (sc.sun, SunConfig()),
-                     (sc.atmosphere, AtmosphereConfig()), (sc.dynamics, DynamicsConfig())):
+                     (sc.atmosphere, AtmosphereConfig()), (sc.dynamics, DynamicsConfig()),
+                     (sc.risk, RiskConfig())):
         for f in fields(ref):
             a, b = getattr(got, f.name), getattr(ref, f.name)
             if isinstance(b, float):

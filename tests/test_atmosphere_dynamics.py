@@ -97,7 +97,7 @@ def test_dynamics_step_adds_and_decays():
     # one very low object that must decay
     pop.elements.a[0] = R_EARTH + 180e3
     sc = load_scenario(overrides={"population.n_real": 5000})
-    dyn = PopulationDynamics(DynamicsConfig(background_frac_per_yr=10.0, breakup_rate_per_yr=0.0), sc.population,
+    dyn = PopulationDynamics(DynamicsConfig(source_mode="fraction", background_frac_per_yr=10.0, breakup_rate_per_yr=0.0), sc.population,
                              1.0, np.random.default_rng(0))
     gone = np.zeros(len(pop), bool)
     new, dmask = dyn.step(copy.deepcopy(pop), gone, DAY)
@@ -112,9 +112,31 @@ def test_simulation_with_dynamics_grows_population():
     sat = baseline_platform(800.0)
     pop = tiny_pop()
     sc = load_scenario(overrides={"population.n_real": 5000})
-    dyn = PopulationDynamics(DynamicsConfig(update_s=1800.0, background_frac_per_yr=5.0, breakup_rate_per_yr=50.0,
+    dyn = PopulationDynamics(DynamicsConfig(update_s=1800.0, source_mode="fraction", background_frac_per_yr=5.0, breakup_rate_per_yr=50.0,
                                             breakup_fragments=200), sc.population, 1.0, np.random.default_rng(2))
     res = run_engagements([sat], pop, 6 * 3600.0, dynamics=dyn)
     s = res.summary()
     assert s["added_background"] > 0 and len(res.removed) == len(pop) + s["added_background"] + s["added_breakup"]
     assert s["pop_final_live"] == len(res.removed) - s["removed"] - s["natural_decays"]
+
+
+def test_replace_decays_keeps_untouched_population_steady():
+    pop = tiny_pop()
+    pop.elements.a[:3] = R_EARTH + 180e3  # three objects that decay at once
+    pop.areal_density[:3] = [0.3, 0.7, 2.0]
+    sc = load_scenario(overrides={"population.n_real": 5000})
+    dyn = PopulationDynamics(DynamicsConfig(source_mode="replace_decays", breakup_rate_per_yr=0.0),
+                             sc.population, 1.0, np.random.default_rng(0))
+    initial = copy.deepcopy(pop)
+    engaged = np.zeros(len(pop), bool)
+    engaged[2] = True  # laser-touched: its decay is not replaced
+    new, dmask = dyn.step(copy.deepcopy(pop), np.zeros(len(pop), bool), DAY, initial=initial, engaged=engaged)
+    assert dmask[:3].all() and dyn.stats["replaced_decays"] == dmask.sum() - 1
+    assert dyn.stats["added_background"] == 0
+    rep = new.subset(np.arange(len(pop), len(new)))
+    assert len(rep) == dyn.stats["replaced_decays"]
+    np.testing.assert_array_equal(rep.areal_density[:2], [0.3, 0.7])
+    np.testing.assert_array_equal(rep.elements.a[:2], initial.elements.a[:2])
+    assert np.all(rep.epoch_s == DAY)
+    with pytest.raises(ValueError, match="initial"):
+        dyn.step(copy.deepcopy(pop), np.zeros(len(pop), bool), 2 * DAY)

@@ -49,6 +49,11 @@ class ResourceState:
     fire_in_eclipse: bool = False
     heater_j: float = 0.0  # cumulative heater energy drawn
     brownout_s: float = 0.0  # cumulative time with an empty battery
+    # hardware-life counters (roadmap item 4)
+    discharge_j: float = 0.0  # cumulative battery discharge (any cause)
+    bursts: int = 0
+    burst_dod_sum: float = 0.0  # sum over bursts of depth of discharge (fraction of capacity)
+    burst_dod_max: float = 0.0
 
     def __post_init__(self) -> None:
         if self.soc_j is None:
@@ -195,6 +200,7 @@ class ResourceState:
                 rate = (heater / t_floor if t_floor > 0 else 0.0) - pc
                 self.brownout_s += -soc / rate if rate > 0 else dt
                 soc = 0.0
+            self.discharge_j += max(0.0, self.soc_j - soc)
             self.soc_j = min(cap, soc)
             self.t = min(t_new, end) if end < t_new else t_new
 
@@ -225,14 +231,22 @@ class ResourceState:
         if f > self.max_fire_s() + 1e-6:
             raise ValueError(f"burst {f:.3f}s exceeds resource limit {self.max_fire_s():.3f}s")
         t_end = self.t + f
+        soc0 = lowest = self.soc_j
         while self.t < t_end - 1e-12:
             lit, pc, alb, end = self._seg(self.t)
             dt = min(t_end, end) - self.t
             p_in = self.p_heat + self._batt_loss(pc) + self.cfg.bus_power_w
             H, _, _ = self._evolve(self.heat_j, p_in, dt, alb)
             self.heat_j = min(H, self.h_max)
-            self.soc_j = float(np.clip(self.soc_j - (self.p_elec - pc) * dt, 0.0, self.cfg.battery_capacity_j))
+            soc = float(np.clip(self.soc_j - (self.p_elec - pc) * dt, 0.0, self.cfg.battery_capacity_j))
+            self.discharge_j += max(0.0, self.soc_j - soc)
+            self.soc_j = soc
+            lowest = min(lowest, soc)
             self.t = min(t_end, end) if end < t_end else t_end
+        dod = (soc0 - lowest) / self.cfg.battery_capacity_j
+        self.bursts += 1
+        self.burst_dod_sum += dod
+        self.burst_dod_max = max(self.burst_dod_max, dod)
 
     def _never_fits(self, f: float) -> bool:
         fresh = ResourceState(self.cfg, self.laser)

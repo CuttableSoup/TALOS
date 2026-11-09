@@ -85,7 +85,8 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
   overrides={"laser.burst_power_kw": 10, ...})`, `run_sweep(readme_matrix(), "runs/x")`.
 - Run: `pip install -e .[dev]` (+ `numba`, `pyarrow` for speed/parquet), then `pytest`.
   Demo: `python scripts/demo_run.py N SATS HOURS MU`; scheduler comparison:
-  `python scripts/compare_scores.py DAYS`.
+  `python scripts/compare_scores.py DAYS`. Single run with progress log:
+  `python scripts/run_baseline.py DAYS --out runs/x [--threads N] [--set section.key=value ...]`.
 - Engagement/removal counts are NOT weight-scaled (one target per burst);
   run at full density (N = n_real).
 
@@ -129,7 +130,9 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 | Detection model | `[atp] detection_model` | passive_optical: Lambertian sphere magnitude, acquire ≤ 16 mag for 10 s, track ≤ 18 mag, +3 mag on sunlit-Earth background | all picks; research needed |
 | Debris albedo | `[population] albedo_median/log_sigma` | 0.1, lognormal σ=0.5 | pick (debris ~0.1–0.2) |
 | Atmosphere | `[atmosphere]` | NRLMSIS 2.1 global mean (Ap 15) vs F10.7; cycle min 70 / max 155, cycle-25 timing | table derived from MSIS; forecast is a pick (use NOAA SWPC) |
-| Background source | `[dynamics] background_frac_per_yr` | 2 % of n_real per year | pick |
+| Background source | `[dynamics] source_mode` | `replace_decays`: each natural decay of a never-engaged object is replaced by an identical object (fresh phases), i.e. the un-lasered band is in steady state; `fraction` = `background_frac_per_yr` (2 %/yr) | assumption (ORDEM forecasts growth, not modelled) |
+| Protected shells | `[risk] shell_*_km` | crewed 370–430 km, Starlink 530–575 km | pick |
+| Uncertainty ranges | `talos.sweep.UNCERTAIN_INPUTS` | η₂ 0.3–0.67, Cm 25–100 (log), η₁ 0.2–0.4, thrust angle 30–60°, wall-plug 0.04–0.17 (log), sun excl. 30–45°, settle 2–10 s | sourced ranges where the table has one, else picks |
 | Breakups | `breakup_rate_per_yr`, `breakup_fragments`, `breakup_dv_sigma_m_s` | 0.5/yr × 2000 fragments, σ 50 m/s per axis | pick (NASA SBM gives ~100 m/s for A/m ~1) |
 | Radiator absorptivity | `radiator_absorptivity` | 0.20 (albedo load) | 0.16 BOL sourced; EOL pick |
 | Radiator turndown | `radiator_turndown_min` | 10 % (louvers) before heaters | pick |
@@ -254,15 +257,21 @@ Likely to change the bottom line:
    parametric cycle-25 forecast; forecast values are picks)*
 4. **Hardware life** — battery cycle life (~1.1 M cycles needed), laser diode
    life by pulse count, UV optics damage/contamination, array degradation:
-   removals over the mission, not per year.
+   removals over the mission, not per year. *(counters done: bursts, laser
+   shots, battery equivalent full cycles and depth of discharge per sat per
+   year in the summary; no degradation model yet, as cycle limits are unsourced)*
 5. **Mass & cost model** — radiator (~10 kg/m²), PCM, arrays, battery, laser →
    launch cost → cost per removal.
 
 Worth adding:
 6. **Risk transfer & safety** — time lowered debris spends crossing ISS /
-   Starlink shells; keep-out for active satellites.
+   Starlink shells; keep-out for active satellites. *(residence done: object-years
+   inside each `[risk]` shell for every engaged object, natural path vs after the
+   laser, to re-entry or 200 yr; no collision probability or keep-out yet)*
 7. **Uncertainty propagation** — Latin-hypercube over η₂, Cm, wall-plug, η₁,
-   sun exclusion, etc., for confidence bands.
+   sun exclusion, etc., for confidence bands. *(driver done: `lhs_matrix`,
+   `uncertainty_bands` (quantiles + Spearman rank correlation),
+   `scripts/run_uncertainty.py N DAYS`)*
 8. **Attitude / slew dynamics** — reaction-wheel torque and momentum for a
    1.5 m beam director, replacing the 5 s settle guess.
 9. **Material-dependent coupling** — Al vs MLI vs paint vs composite;
