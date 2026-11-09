@@ -303,8 +303,9 @@ raw spectra). Installed at `%LOCALAPPDATA%\NASA\ORDEM 3.2` (or `TALOS_ORDEM_HOME
   Same shot rate and Δv, but 2.4× the removals: the SSO-concentrated debris
   stays near-coplanar with the platforms, so the same objects come back into
   range and the removal-progress scheduler finishes them (~11 engagements
-  each). Debris-years removed is about equal (finished objects are lower and
-  shorter-lived; removed median start perigee 755 km). No breakup was drawn
+  each). Debris-years removed is about equal despite 2.4× the removals; not yet
+  explained (removed median start perigee is 755 km vs 738 km toy, so it is not
+  that finished objects start lower). No breakup was drawn
   in the ORDEM run (Poisson, 0.5/yr) and no natural decays (fewer low objects),
   so net change is −2.4k/yr vs +23k/yr in the toy run, which had one breakup.
   Removals are still climbing at day 30.
