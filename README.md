@@ -699,8 +699,15 @@ frame, target orbits, colour untouched debris by μ, thin the untouched debris.
   decays, new objects; the dynamics have their own generator), with every logged burst's
   post-burst elements (`a_after_m` … `M_after_rad` at `t_elements_s`) written in. It
   reproduces the sim's checkpointed population bit for bit (tests/test_render.py); a
-  checkpoint before the window only saves replay time (~0.12 s per sim day). Decay steps
-  inside the window go to the viewer as snapshots (~1.7 MB each). Event logs from before
+  checkpoint before the window only saves replay time (~0.12 s per sim day).
+- Decay steps inside the window: the viewer runs each step itself (angles by J2, a and e
+  linear at each object's drag rates from `lifetime.decay_rates`), and the exporter, which
+  mirrors the viewer exactly (Node test), sends a correction only where that ends > 0.5 km
+  from the sim (`SNAP_TOL_KM`). Without the local step every object needs a daily update
+  (untouched objects drift a median 3 km after one day, ~150 km after ten). 30-day design
+  run as one page: 167k corrections (vs 1.93M), 23 MB, built in 19 s; drawn target vs sim
+  median 49 m, p95 0.38 km, max 3.2 km over 51k bursts. Pages grow ~0.75 MB per sim day,
+  so keep windows to a few months. Event logs from before
   2026-11-09 lack the post-burst elements and are rejected; runs with ablation
   fragmentation are not supported (fragments come from the engagement generator).
 - Browser propagation (`src/talos/viewer/orbit.js`) is the J2 mean-element model of
@@ -714,7 +721,8 @@ frame, target orbits, colour untouched debris by μ, thin the untouched debris.
 - Headless Chrome (SwiftShader, no GPU) with the globe: ~10.5 fps with all 70k points; a
   real GPU should be well above that. The untouched-debris thinning option is there if a
   machine struggles.
-- Not drawn: drag within a day (between decay steps).
+- Not drawn: drag within a day (between decay steps); the sim's own propagation also
+  holds the phase fixed between steps.
 
 ## Next step
 Multi-year run of `config/design.toml` with the corrected η₁ basis (overnight) after a source-rate check (where the removal rate settles); Latin-hypercube bands on the design including fragmentation 0–1 %, Cm ÷3 to ×2, thermal coupling; thermal coupling at 355 nm / 100 ps (melt bound); absolute pointing budget; detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.

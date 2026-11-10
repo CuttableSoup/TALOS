@@ -139,3 +139,35 @@ def test_late_window_without_checkpoint_stays_on_target(tmp_path):
     m = render_window(sc, ev, 2.0 * 3600, 3 * 3600.0, tmp_path / "late.html")
     assert not m["from_checkpoint"] and m["n_snapshots"] >= 1 and m["n_events"] > 0
     assert m["miss_km"]["max"] < 1.0  # decay steps before and inside the window are replayed
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_js_decay_step_matches_python_mirror(tmp_path):
+    from talos.render import _local_step
+
+    rng = np.random.default_rng(9)
+    n = 100
+    el = np.stack([6.378e6 + rng.uniform(3e5, 1.1e6, n), rng.uniform(0, 0.05, n), rng.uniform(0, np.pi, n),
+                   rng.uniform(0, 2 * np.pi, n), rng.uniform(0, 2 * np.pi, n), rng.uniform(0, 2 * np.pi, n)], 1)
+    ep = rng.uniform(0, 4e4, n)
+    rate = np.stack([-rng.uniform(0, 0.05, n), -rng.uniform(0, 1e-9, n)], 1).astype(np.float32).astype(float)
+    py = el.copy(), ep.copy()
+    for u in (86400.0, 172800.0):
+        _local_step(py[0], py[1], rate, u, np.ones(n, bool))
+    t = 200000.0
+    want, _ = elements_to_rv(propagate(KeplerElements(*py[0].T), t - py[1]))
+    js = tmp_path / "step.js"
+    js.write_text(
+        f"const O = require({json.dumps(str(_VIEWER_DIR / 'orbit.js'))});\n"
+        "const d = JSON.parse(require('fs').readFileSync(0, 'utf8')); const n = d.ep.length;\n"
+        "const el = {}; ['a','e','i','raan','argp','M'].forEach((k, j) => el[k] = Float64Array.from(d.el.map(r => r[j])));\n"
+        "el.ep = Float64Array.from(d.ep); const ad = Float64Array.from(d.rate.map(r => r[0])), ed = Float64Array.from(d.rate.map(r => r[1]));\n"
+        "const rates = new Float64Array(3 * n), out = new Float64Array(3 * n);\n"
+        "for (let k = 0; k < n; k++) O.j2Rates(el.a[k], el.e[k], el.i[k], rates, k);\n"
+        "for (const u of [86400, 172800]) for (let k = 0; k < n; k++) O.decayStep(el, rates, ad, ed, k, u);\n"
+        "for (let k = 0; k < n; k++) O.positionAt(el, rates, k, d.t, out, 3 * k);\n"
+        "process.stdout.write(JSON.stringify(Array.from(out)));\n")
+    inp = {"el": el.tolist(), "ep": ep.tolist(), "rate": rate.tolist(), "t": t}
+    out = subprocess.run(["node", str(js)], input=json.dumps(inp), capture_output=True, text=True, check=True)
+    got = np.array(json.loads(out.stdout)).reshape(n, 3)
+    assert np.max(np.linalg.norm(got - want, axis=1)) < 1e-2  # metres

@@ -21,6 +21,7 @@
   const st = { a: new Float64Array(N), e: new Float64Array(N), i: new Float64Array(N), raan: new Float64Array(N),
                argp: new Float64Array(N), M: new Float64Array(N), ep: new Float64Array(N) };
   const rates = new Float64Array(3 * N);
+  const adot = new Float64Array(N), edot = new Float64Array(N); // drag: da/dt [m/s], de/dt [1/s]
   const engaged = new Uint8Array(N), removed = new Uint8Array(N), visible = new Uint8Array(N);
   const plat = { a: new Float64Array(P), e: new Float64Array(P), i: new Float64Array(P), raan: new Float64Array(P),
                  argp: new Float64Array(P), M: new Float64Array(P), ep: new Float64Array(P) };
@@ -50,7 +51,8 @@
 
   function reset() {
     for (const k of EL) st[k].set(A["obj_" + k]);
-    st.ep.fill(0);
+    st.ep.set(A.obj_ep);
+    adot.set(A.obj_adot); edot.set(A.obj_edot);
     for (let o = 0; o < N; o++) O.j2Rates(st.a[o], st.e[o], st.i[o], rates, o);
     engaged.set(A.obj_engaged_before); removed.set(A.obj_removed_before);
     for (let o = 0; o < N; o++) visible[o] = liveAt(o, 0);
@@ -63,6 +65,7 @@
     if (A.ev_keep_el[k]) {  // else a decay step during the burst already holds the sim's elements
       EL.forEach((name, j) => (st[name][o] = A.ev_el[6 * k + j]));
       st.ep[o] = A.ev_tm[k];
+      adot[o] = A.ev_rate[2 * k]; edot[o] = A.ev_rate[2 * k + 1];
       O.j2Rates(st.a[o], st.e[o], st.i[o], rates, o);
     }
     engaged[o] = 1;
@@ -70,14 +73,19 @@
     tally.bursts++; tally.dv += A.ev_dv[k];
     if (!colourDirty) styleObj(o);
   }
-  function applySnapshot(s) {  // the sim's daily decay + re-epoch of every live object
-    const base = s * N * 6, ts = A.snap_t[s];
-    for (let o = 0; o < N; o++) {
-      const q = base + 6 * o;
-      if (Number.isNaN(A.snap_el[q])) continue;
+  // sparse decay steps: snapshot s updates objects snap_idx[off[s] .. off[s] + snap_n[s])
+  const snapOff = new Int32Array(S + 1);
+  for (let s = 0; s < S; s++) snapOff[s + 1] = snapOff[s] + A.snap_n[s];
+  function applySnapshot(s) {  // the sim's decay step: run it locally, then apply corrections
+    const u = A.snap_t[s];
+    for (let o = 0; o < N; o++)
+      if (!removed[o] && A.obj_t_add[o] <= u && u < A.obj_t_gone[o]) O.decayStep(st, rates, adot, edot, o, u);
+    for (let j = snapOff[s]; j < snapOff[s + 1]; j++) {
+      const o = A.snap_idx[j], q = 6 * j;
       st.a[o] = A.snap_el[q]; st.e[o] = A.snap_el[q + 1]; st.i[o] = A.snap_el[q + 2];
       st.raan[o] = A.snap_el[q + 3]; st.argp[o] = A.snap_el[q + 4]; st.M[o] = A.snap_el[q + 5];
-      st.ep[o] = ts;
+      st.ep[o] = u;
+      adot[o] = A.snap_rate[2 * j]; edot[o] = A.snap_rate[2 * j + 1];
       O.j2Rates(st.a[o], st.e[o], st.i[o], rates, o);
     }
   }

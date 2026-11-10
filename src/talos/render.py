@@ -175,7 +175,9 @@ def _export(sc, events, t0_s, t1_s, checkpoint, max_background, seed):
     snaps = []
     for u in _step_times(rp, t1_s):
         rp.advance(u, include_step_at_t=True)
-        snaps.append((u, copy.deepcopy(rp.pop.elements), rp.pop.epoch_s.copy(), (rp.removed | rp.decayed).copy()))
+        el_u = np.stack([getattr(rp.pop.elements, k) for k in _EL], axis=1)  # live objects: epoch u
+        el_u[rp.removed | rp.decayed] = np.nan  # not tracked by the sim from here on
+        snaps.append((u, el_u))
     rp.advance(t1_s, include_step_at_t=False)
     pop = rp.pop
     n_all = len(pop)
@@ -195,38 +197,33 @@ def _export(sc, events, t0_s, t1_s, checkpoint, max_background, seed):
     remap[idx] = np.arange(len(idx))
     N = len(idx)
 
-    # state at t0 (viewer clock: seconds since t0); objects added later start at their entry state
+    # state at t0 (viewer clock: seconds since t0); objects added later start at entry, epoch = entry
     el0 = np.zeros((N, 6))
+    ep0 = np.zeros(N)
     in0 = idx < n_t0
     e0 = propagate(base_el[idx[in0]], t0_s - base_ep[idx[in0]])
     el0[in0] = np.stack([getattr(e0, k) for k in _EL], axis=1)
     late = idx[~in0]
     if len(late):
-        e_late = propagate(rp.pop0.elements[late], t0_s - rp.pop0.epoch_s[late])
-        el0[~in0] = np.stack([getattr(e_late, k) for k in _EL], axis=1)
+        el0[~in0] = np.stack([getattr(rp.pop0.elements, k)[late] for k in _EL], axis=1)
+        ep0[~in0] = rp.pop0.epoch_s[late] - t0_s
     t_add = np.where(np.isfinite(rp.added_at[idx]), rp.added_at[idx] - t0_s, -1.0)
     t_add = np.maximum(t_add, -1.0)
     gone_at = rp.decayed_at[idx] - t0_s
     gone_at[rp.decayed_at[idx] <= t0_s] = -1.0  # decayed before the window: never shown
+    bc = pop.ballistic_coeff[idx]
+    rates0 = _drag_rates(el0, bc, ep0 + t0_s)
 
-    # snapshots, per drawn object; NaN where the sim does not track the object then
-    K = len(snaps)
-    snap_el = np.full((K, N, 6), np.nan, np.float32)
-    for s, (u, el_s, ep_s, gone_s) in enumerate(snaps):
-        exists = np.flatnonzero(idx < len(ep_s))
-        live = exists[~gone_s[idx[exists]]]
-        sub = idx[live]
-        e_u = propagate(el_s[sub], u - ep_s[sub])  # live objects were re-epoched to u
-        snap_el[s, live] = np.stack([getattr(e_u, k) for k in _EL], axis=1)
-    snap_t = np.array([u - t0_s for u, *_ in snaps], float)
-
-    # a burst spanning a step was decayed by that step in the sim: keep the snapshot's elements
     ts, te = win.t_start.to_numpy(float) - t0_s, win.t_stop.to_numpy(float) - t0_s
-    keep_el = np.ones(len(win), np.uint8)
-    for u in snap_t:
-        keep_el[(ts < u) & (te > u)] = 0
-
-    miss = _viewer_miss(el0, snap_t, snap_el, win, remap, t0_s, keep_el)
+    snap_t = np.array([u - t0_s for u, _ in snaps], float)
+    period = rp.dyn.cfg.update_s if rp.dyn is not None else 86400.0
+    rb_idx = np.zeros(n_all, bool)
+    rb_idx[:len(removed_before)] = removed_before
+    ev_obj = remap[win.debris_index.to_numpy(int)]
+    ev_rate = _drag_rates(win[list(_EV_EL)].to_numpy(float), bc[ev_obj], win.t_elements_s.to_numpy(float))
+    sparse, miss, keep_el = _mirror(el0, ep0, rates0, bc, rb_idx[idx], t_add, gone_at, snap_t,
+                                    [el for _, el in snaps], idx, win, remap, t0_s, period, ev_rate)
+    K = len(snaps)
     platforms = rp.platforms
     pnames = [p.name for p in platforms]
     pel = np.array([[float(getattr(propagate(p.orbit, t0_s), k)) for k in _EL] for p in platforms])
@@ -240,6 +237,7 @@ def _export(sc, events, t0_s, t1_s, checkpoint, max_background, seed):
         "n_population": int(n_t0),
         "n_events": int(len(win)),
         "n_snapshots": int(K),
+        "snapshot_updates": int(len(sparse["idx"])),
         "platforms": [{"name": n, "alt_km": float(p.orbit.a - R_EARTH) / 1e3} for n, p in zip(pnames, platforms)],
         "materials": list(MATERIAL_NAMES),
         "removed_before": int(removed_before.sum()),
@@ -256,6 +254,8 @@ def _export(sc, events, t0_s, t1_s, checkpoint, max_background, seed):
     arrays = {
         **{f"obj_{k}": el0[:, j].astype(np.float64) for j, k in enumerate(_EL)},
         "obj_id": idx.astype(np.int32),
+        "obj_ep": ep0,
+        "obj_adot": rates0[:, 0].astype(np.float32), "obj_edot": rates0[:, 1].astype(np.float32),
         "obj_t_add": t_add.astype(np.float32),
         "obj_t_gone": gone_at.astype(np.float32),
         "obj_diam": pop.diameter_m[idx].astype(np.float32),
@@ -263,7 +263,8 @@ def _export(sc, events, t0_s, t1_s, checkpoint, max_background, seed):
         "obj_mat": mat.astype(np.int8),
         "obj_engaged_before": eb[idx], "obj_removed_before": rb[idx],
         "plat_el": pel.ravel().astype(np.float64),
-        "snap_t": snap_t, "snap_el": snap_el.ravel(),
+        "snap_t": snap_t, "snap_n": sparse["n"], "snap_idx": sparse["idx"], "snap_el": sparse["el"].ravel(),
+        "snap_rate": sparse["rate"].ravel(),
         "ev_plat": np.array([pnames.index(p) for p in win.platform], np.uint8),
         "ev_obj": remap[win.debris_index.to_numpy(int)].astype(np.int32),
         "ev_t0": ts, "ev_t1": te, "ev_tm": win.t_elements_s.to_numpy(float) - t0_s,
@@ -271,7 +272,7 @@ def _export(sc, events, t0_s, t1_s, checkpoint, max_background, seed):
         "ev_rp0": (win.perigee_alt_before_m.to_numpy(float) / 1e3).astype(np.float32),
         "ev_rp1": (win.perigee_alt_after_m.to_numpy(float) / 1e3).astype(np.float32),
         "ev_removed": win.removed.to_numpy(np.uint8),
-        "ev_keep_el": keep_el,
+        "ev_keep_el": keep_el, "ev_rate": ev_rate.astype(np.float32).ravel(),
         "ev_el": win[list(_EV_EL)].to_numpy(np.float64).ravel(),
         "ev_miss_km": np.nan_to_num(miss, nan=-1.0).astype(np.float32),
     }
@@ -288,34 +289,91 @@ def _step_times(rp: Replay, t1_s: float) -> list[float]:
     return out
 
 
-def _viewer_miss(el0, snap_t, snap_el, win, remap, t0_s, keep_el) -> np.ndarray:
-    """Mirror the viewer's state machine and measure |drawn target - sim target| at mid-burst."""
-    el, ep = el0.copy(), np.zeros(len(el0))
+SNAP_TOL_KM = 0.5  # correct the viewer's own decay step where it would be off by more than this
+
+
+def _rv(el: np.ndarray, dt) -> np.ndarray:
+    r, _ = elements_to_rv(propagate(KeplerElements(*el.T), dt))
+    return r
+
+
+def _drag_rates(el: np.ndarray, bc: np.ndarray, t_s) -> np.ndarray:
+    """(da/dt, de/dt) per object, float32-rounded as the viewer receives them."""
+    from .lifetime import decay_rates
+
+    if len(el) == 0:
+        return np.zeros((0, 2))
+    da, de = decay_rates(el[:, 0], el[:, 1], bc, t_s=np.broadcast_to(t_s, el[:, 0].shape))
+    return np.stack([da, de], axis=1).astype(np.float32).astype(float)
+
+
+def _local_step(el, ep, rate, u, m):
+    """The viewer's decay step (orbit.js decayStep): J2 angles at the current elements,
+    a and e linear at the object's drag rates, re-epoch to u."""
+    span = u - ep[m]
+    moved = propagate(KeplerElements(*el[m].T), span)
+    el[m, 0] = el[m, 0] + rate[m, 0] * span
+    el[m, 1] = np.clip(el[m, 1] + rate[m, 1] * span, 0.0, 0.999)
+    el[m, 3], el[m, 4], el[m, 5] = moved.raan, moved.argp, moved.M
+    ep[m] = u
+
+
+def _mirror(el0, ep0, rate0, bc, removed0, t_add, t_gone, snap_t, snap_full, idx, win, remap, t0_s, period,
+            ev_rate):
+    """Run the viewer's state machine. At each sim decay step the viewer steps every live
+    object itself (_local_step); where that ends more than SNAP_TOL_KM (one step later) from
+    the sim's elements, a correction (elements + new drag rates) is sent. Returns the sparse
+    corrections, |drawn target - sim target| at each burst's mid-time [km], and keep_el."""
+    el, ep, rate = el0.copy(), ep0.copy(), rate0.copy()
+    removed = removed0.copy()
     t1 = win.t_stop.to_numpy(float) - t0_s
+    ts = win.t_start.to_numpy(float) - t0_s
     tm = win.t_elements_s.to_numpy(float) - t0_s
     obj = remap[win.debris_index.to_numpy(int)]
     after = win[list(_EV_EL)].to_numpy(float)
-    # timeline at equal times: snapshots, then applies, then measures
-    items = [(u, 0, s) for s, u in enumerate(snap_t)]
+    rem = win.removed.to_numpy(bool)
+    keep_el = np.ones(len(win), np.uint8)
+    items = [(u, 0, s) for s, u in enumerate(snap_t)]  # at equal times: steps, applies, measures
     items += [(t1[k], 1, k) for k in range(len(win))]
     items += [(tm[k], 2, k) for k in range(len(win))]
     items.sort(key=lambda x: (x[0], x[1]))
     miss = np.full(len(win), np.nan)
+    n_out, idx_out, el_out, rate_out = [], [], [], []
     for t, kind, k in items:
         if kind == 0:
-            ok = np.isfinite(snap_el[k, :, 0])
-            el[ok] = snap_el[k, ok]
-            ep[ok] = t
+            full = snap_full[k]
+            step = ~removed & (t_add <= t) & (t < t_gone)
+            _local_step(el, ep, rate, t, step)
+            exists = np.flatnonzero(idx < len(full))  # objects added later do not exist yet
+            cand = exists[np.isfinite(full[idx[exists], 0])]  # NaN: the sim stopped tracking it
+            # a burst spanning this step was decayed by it in the sim: keep these elements then
+            span = np.flatnonzero((ts < t) & (t1 > t))
+            keep_el[span[np.isin(obj[span], cand)]] = 0
+            new = full[idx[cand]].astype(np.float32).astype(float)
+            h = t + period
+            gap = np.linalg.norm(_rv(new, h - t) - _rv(el[cand], h - ep[cand]), axis=1) / 1e3
+            send = cand[gap > SNAP_TOL_KM]
+            el[send], ep[send] = new[gap > SNAP_TOL_KM], t
+            rate[send] = _drag_rates(el[send], bc[send], t + t0_s)
+            n_out.append(len(send))
+            idx_out.append(send.astype(np.int32))
+            el_out.append(el[send].astype(np.float32))
+            rate_out.append(rate[send].astype(np.float32))
         elif kind == 1:
+            o = obj[k]
             if keep_el[k]:
-                el[obj[k]] = after[k]
-                ep[obj[k]] = tm[k]
+                el[o], ep[o], rate[o] = after[k], tm[k], ev_rate[k]
+            removed[o] |= rem[k]
         else:
             o = obj[k]
-            r_view, _ = elements_to_rv(propagate(KeplerElements(*el[o]), tm[k] - ep[o]))
-            r_sim, _ = elements_to_rv(KeplerElements(*after[k]))
+            r_view = _rv(el[o][None, :], tm[k] - ep[o])[0]
+            r_sim = _rv(after[k][None, :], 0.0)[0]
             miss[k] = np.linalg.norm(r_view - r_sim) / 1e3
-    return miss
+    sparse = {"n": np.array(n_out, np.int32),
+              "idx": np.concatenate(idx_out) if idx_out else np.zeros(0, np.int32),
+              "el": np.concatenate(el_out) if el_out else np.zeros((0, 6), np.float32),
+              "rate": np.concatenate(rate_out) if rate_out else np.zeros((0, 2), np.float32)}
+    return sparse, miss, keep_el
 
 
 def write_viewer(data: dict, path) -> Path:
@@ -358,4 +416,4 @@ def describe(meta: dict) -> str:
            if m["median"] is not None else "n/a")
     size = Path(meta["path"]).stat().st_size / 1e6
     return (f"{meta['path']} ({size:.1f} MB): {meta['n_obj']:,} objects, {meta['n_events']:,} bursts, "
-            f"{meta['n_snapshots']} decay steps; target vs sim at mid-burst {gap}")
+            f"{meta['n_snapshots']} decay steps ({meta['snapshot_updates']:,} object updates); target vs sim at mid-burst {gap}")

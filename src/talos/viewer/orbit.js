@@ -70,7 +70,21 @@
     }
   }
 
-  const api = { MU, RE, J2, j2Rates, solveKepler, positionAt, orbitRing };
+  // The sim's daily decay step as the viewer runs it (talos.render._local_step): angles by
+  // J2 at the current elements, a and e linear at the object's drag rates, re-epoch to u.
+  function decayStep(el, rates, adot, edot, k, u) {
+    const span = u - el.ep[k];
+    if (!(span > 0)) return;
+    el.raan[k] += rates[3 * k] * span;
+    el.argp[k] += rates[3 * k + 1] * span;
+    el.M[k] += rates[3 * k + 2] * span;
+    el.a[k] += adot[k] * span;
+    el.e[k] = Math.min(0.999, Math.max(0, el.e[k] + edot[k] * span));
+    el.ep[k] = u;
+    j2Rates(el.a[k], el.e[k], el.i[k], rates, k);
+  }
+
+  const api = { MU, RE, J2, j2Rates, solveKepler, positionAt, orbitRing, decayStep };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.TalosOrbit = api;
 })(typeof window !== "undefined" ? window : this);
