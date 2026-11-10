@@ -790,6 +790,36 @@ Early mission for reference: $344/debris-yr (first 30 days), $518 over 2 years.
   variants (+1,900–2,000 obj-yr/yr for power2x / sats8, +380 control, −760 prf2x); 30-day
   counts are small, so treat the sign as noisy.
 
+## Storage life sourcing and cost per debris-year (2026-11-10)
+- Supercap life (talos.platform STORAGE_PRESETS notes): Maxwell 160V 10F datasheet gives
+  500,000 cycles (VR → VR/2, i.e. 75 % of the energy, at 25 °C, to −20 % capacitance /
+  +100 % ESR) and a 10-yr projected life at VR, 25 °C; Maxwell: "lifetime is governed by
+  operating temperature and voltage". No quantitative EDLC cycle-life-vs-depth data found,
+  so each burst still counts as one cycle (exponent 0). Space: the Airbus/ESA BOSC bank
+  passed > 2.3 million cycles under relevant electrical / thermal / vacuum conditions
+  (conditions unpublished). So the cycle rating is uncertain ~5× (0.5–2.3 M).
+- New: calendar ageing (`storage_calendar_life_yr`, 10 yr for supercaps), Miner's rule with
+  the cycle damage: life = 1 / (cycle damage per yr + 1 / calendar life). Summaries also
+  report `storage_cycle_life_yr` (cycling alone).
+- New headline metric `cost_per_debris_year_usd` (talos.cost), with `debris_years_mission`
+  and `credited_fraction`. Cost per removal stays but swings ~85× between mission phases.
+- Finished runs re-costed (cycle life from the runs, + 10-yr calendar):
+  | run | cycle life (yr) | life (yr) | $/removal | credited | $/debris-yr |
+  |---|---|---|---|---|---|
+  | design, first 30 d | 3.02 | 2.32 | $13k | 100 % | 444 |
+  | design, 2 yr | 2.66 | 2.10 | $30k | 100 % | 651 |
+  | late sky: control | 2.94 | 2.27 | $1.12M | 26 % | 848 |
+  | late sky: power2x | 1.39 | 1.22 | $1.43M | 29 % | 1,131 |
+  | late sky: prf2x | 4.48 | 3.09 | $775k | 34 % | 880 |
+  | late sky: burst40 | 4.25 | 2.98 | $811k | 30 % | 852 |
+  | late sky: sats8 | 2.90 | 2.25 | $834k | 38 % | 824 |
+  The calendar term cuts the design's life ~22 % and flattens the gain from cycling
+  less (prf2x / burst40 now ~= control per debris-year). With ≥ 2.3 M cycles the
+  life would sit near the 5-yr design cap and calendar ageing would matter more.
+- `summaries/<name>.parquet` per run; `summary.parquet` is rebuilt from them (parallel
+  runs into one folder had overwritten each other's summary).
+
 ## Next step
+Whole-mission design sweep scored on cost per debris-year over the early sky and the day-720 sky (`--fresh-platforms`), average power × burst length × storage size, with the storage cycle rating at 0.5 M and 2.3 M;
 Storage cycle life is the late-mission limit: size storage for life (bigger / longer-lived bank, fewer cycles per joule) together with average power;
 Δv per burst against μ ≥ 2 targets (the late-mission limit: burst energy, Cm by material, revisit rate) and whether a mission should be sized to the light inventory (~2 yr); Latin-hypercube bands on the design including fragmentation 0–1 %, Cm ÷3 to ×2, thermal coupling; thermal coupling at 355 nm / 100 ps (melt bound); absolute pointing budget; detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.

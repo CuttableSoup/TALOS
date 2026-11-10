@@ -5,7 +5,9 @@ worker the numba kernels use ``threads_per_job`` threads. The default split uses
 every logical core: n_jobs * threads_per_job = os.cpu_count().
 
 Outputs (in ``out_dir``):
-  * summary.parquet: one row per run (config + SimResult.summary()).
+  * summaries/<name>.parquet: one row per run (config + SimResult.summary() + cost);
+    summary.parquet: all runs in the folder, rebuilt from those (so separate processes
+    writing into one folder add rows instead of overwriting each other).
   * events/<name>.parquet: per-engagement event log for playback/analysis.
   * logs/<name>.log: one progress line per ``log_every_s`` of sim time (sim day,
     wall time, engagements, removals, live population), written while the run goes.
@@ -182,8 +184,15 @@ def run_sweep(
     df = pd.DataFrame(rows).set_index("name").loc[names].reset_index()
     if out_dir is not None:
         out = Path(out_dir)
-        out.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(out / "summary.parquet", index=False)
+        (out / "summaries").mkdir(parents=True, exist_ok=True)
+        for _, row in df.iterrows():  # one file per run: parallel sweeps into one folder don't clobber
+            pd.DataFrame([row]).to_parquet(out / "summaries" / f"{row['name']}.parquet", index=False)
+        # summary.parquet: every run in this folder, rebuilt from the per-run files
+        allrows = pd.concat([pd.read_parquet(p) for p in sorted((out / "summaries").glob("*.parquet"))],
+                            ignore_index=True)
+        tmp = out / f"summary.parquet.{os.getpid()}.tmp"
+        allrows.to_parquet(tmp, index=False)
+        os.replace(tmp, out / "summary.parquet")
     return df
 
 

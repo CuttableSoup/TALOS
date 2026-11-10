@@ -8,10 +8,15 @@ Per platform:
   laser shot life at the run's firing rate);
 * cost = mass x (hardware + launch $/kg) + operations x life.
 
-Cost per removal = constellation cost / (credited removals per year x life).
-The removal rate is the run's own annualised rate: a 30-day run is still on
-its ramp and a 1-year run shows depletion of the light tail (README), so treat
-the absolute figure as indicative and compare designs at equal run length.
+Headline: cost per debris-year = constellation cost / (debris-years removed per
+year x life), debris-years being the summed reduction in orbital lifetime. Cost per
+(credited) removal is kept, but it misleads across mission phases: late in a
+mission most removals finish objects already lowered (little lifetime left, not
+credited) while heavy objects carry long lifetimes, so per removal the late phase
+looked ~85x dearer than the early one and per debris-year ~2x (README, "Hardware
+against the depleted sky"). Rates are the run's own annualised rates: a 30-day
+run sees only the light-target phase, so compare designs over both phases
+(early sky and a depleted checkpoint, run_baseline.py --fresh-platforms).
 Every coefficient is a PICK pending sourced values.
 """
 
@@ -69,6 +74,8 @@ def evaluate(sc, summary: dict) -> dict:
     per_sat = m["total"] * (cfg.hardware_usd_per_kg + cfg.launch_usd_per_kg) + cfg.ops_usd_per_sat_yr * life
     total = n * per_sat
     removals = summary.get("removed_credited_per_yr", 0.0) * life
+    dyears = summary.get("debris_years_removed_per_yr", 0.0) * life
+    removed = summary.get("removed", 0)
     return {
         **{f"mass_{k}_kg": v for k, v in m.items()},
         "laser_life_yr": float(lives["laser"]),
@@ -76,7 +83,11 @@ def evaluate(sc, summary: dict) -> dict:
         "life_limit": limit,
         "cost_musd": total / 1e6,
         "removals_mission": removals,
+        "debris_years_mission": dyears,
+        "cost_per_debris_year_usd": total / dyears if dyears > 0 else np.inf,
         "cost_per_removal_kusd": total / removals / 1e3 if removals > 0 else np.inf,
+        # share of removals credited (> 1 yr natural lifetime left): low late in a mission
+        "credited_fraction": summary.get("removed_credited", 0) / removed if removed > 0 else np.nan,
         # active-satellite collisions avoided over the mission (talos.risk), annualised rate x life
         "cost_per_collision_avoided_musd": (total / (summary["active_collisions_avoided_per_yr"] * life) / 1e6
                                             if summary.get("active_collisions_avoided_per_yr", 0) > 0 else np.inf),

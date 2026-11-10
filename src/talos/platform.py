@@ -39,7 +39,17 @@ class LaserConfig:
 #   li_ion: N(30-40 % DoD) = 24-39k cycles, consistent with the ~30k-cycle LEO requirement
 #     met by cycling below 40 % DoD (JAXA lithium-ion capacitor study). Shape is still a pick.
 #   lto: vendor >= 25k cycles to 80 % capacity (Nichicon), DoD unstated; not space-qualified.
-#   supercap: Maxwell 160 V modules (BMOD0006 / 160V 10F) are rated "up to 500,000 duty
+#   supercap (2026-11-10 pass): Maxwell 160V 10F datasheet (3003345-EN.2): projected cycle
+#     life 500,000 cycles and projected life 10 years, both at VR = 160 V, 25 C, to -20 %
+#     capacitance / +100 % ESR; accelerated aging 3,000 h at VR, 65 C. Cycle = VR -> VR/2
+#     (75 % of the energy). Maxwell user notes: "lifetime is governed by operating
+#     temperature and voltage" (derate voltage for life). No quantitative EDLC
+#     cycle-life-vs-depth data found, so exponent 0 (every burst one cycle) stands, now with
+#     the 10-yr calendar term. Space: Airbus BOSC bank (ESA) > 2.3 million cycles under
+#     relevant electrical / thermal / vacuum conditions, fading "as expected" (conditions not
+#     published): 5e5 is the datasheet floor, >= 2.3e6 demonstrated. Skeleton SpaceCap
+#     targets 18 yr at 20 C at 2.5 V (derated from 2.85 V).
+#   (2026-11-09 note) Maxwell 160 V modules (BMOD0006 / 160V 10F) are rated "up to 500,000 duty
 #     cycles" (VR -> VR/2 at 25 C; EOL -20 % capacitance, +100 % ESR) at 3.8-5.4 Wh/kg
 #     module level; only space-qualified part found is a Nesscap 10 F cell (ESA EPPL II, no
 #     cycle count). Was 1e6 cycles / 5 Wh/kg before 2026-11-09.
@@ -48,7 +58,7 @@ STORAGE_PRESETS = {
                    storage_specific_energy_wh_kg=120.0, battery_rt_eff=0.85),
     "lto": dict(storage_cycles_100=20000.0, storage_cycle_exponent=1.2,
                 storage_specific_energy_wh_kg=70.0, battery_rt_eff=0.90),
-    "supercap": dict(storage_cycles_100=5.0e5, storage_cycle_exponent=0.0,
+    "supercap": dict(storage_cycles_100=5.0e5, storage_cycle_exponent=0.0, storage_calendar_life_yr=10.0,
                      storage_specific_energy_wh_kg=4.0, battery_rt_eff=0.95),
 }
 
@@ -122,6 +132,9 @@ class ResourceConfig:
     # storage cycle life (PICKS; see STORAGE_PRESETS): N(DoD) = cycles_100 * DoD^-exponent
     storage_cycles_100: float = 5000.0  # cycles to end of life at 100 % depth of discharge
     storage_cycle_exponent: float = 1.7  # Woehler-type DoD sensitivity
+    # calendar (float) life at the storage's operating voltage / temperature: ageing that
+    # accrues with time whether or not it cycles; Miner's rule with the cycle damage
+    storage_calendar_life_yr: float = float("inf")
     storage_specific_energy_wh_kg: float = 120.0  # pack level, for the mass model
     burst_s: float = 10.0  # longest burst (also cut by the resource limit and the target window)
     # Readiness: after a burst the platform waits until a burst of ready_burst_s fits

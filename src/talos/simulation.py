@@ -507,9 +507,12 @@ def run_engagements(
         "battery_efc_per_sat_per_yr": float(np.mean([s.discharge_j for s in sts])) / cap * yr,
         "battery_dod_mean": float(sum(s.burst_dod_sum for s in sts) / max(1, sum(s.bursts for s in sts))),
         "battery_dod_max": float(max(s.burst_dod_max for s in sts)),
-        # storage end of life (damage = 1) at this run's cycling, worst platform
-        "storage_life_yr": float(min((span / YEAR) / s.storage_damage if s.storage_damage > 0 else np.inf
-                                     for s in sts)),
+        # storage end of life (damage = 1), worst platform: cycle damage at this run's cycling plus
+        # calendar ageing (Miner's rule), 1 / (cycle damage per yr + 1 / calendar life)
+        "storage_life_yr": float(min(_storage_life_yr(s.storage_damage / (span / YEAR),
+                                                      s.cfg.storage_calendar_life_yr) for s in sts)),
+        "storage_cycle_life_yr": float(min((span / YEAR) / s.storage_damage if s.storage_damage > 0 else np.inf
+                                           for s in sts)),
         "ready_burst_s": float(np.mean(list(ready_s.values()))),
     }
     if env is not None:
@@ -534,6 +537,11 @@ def run_engagements(
                      dict(planner.stats, committed_now=len(planner.committed)) if planner is not None else {},
                      env_stats, pop_stats, names, res_i, res_f, res_frag,
                      c_start if fresh else 0.0, removed_at_start)
+
+
+def _storage_life_yr(cycle_damage_per_yr: float, calendar_life_yr: float) -> float:
+    rate = cycle_damage_per_yr + (1.0 / calendar_life_yr if calendar_life_yr > 0 else np.inf)
+    return 1.0 / rate if rate > 0 else np.inf
 
 
 def load_checkpoint(path) -> dict:
