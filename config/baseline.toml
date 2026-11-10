@@ -122,6 +122,16 @@ eta1_mean = 0.3                # [sourced]
 eta1_kappa = 10.0              # [guess] spread
 off_axis_mean_deg = 45.0       # [sourced]
 off_axis_sigma_deg = 15.0      # [guess] spread
+attitude_model = "per_pulse"   # [pick] per_pulse | per_burst (slow tumble: eta1 / thrust direction fixed per burst)
+# Cm relative to nominal by ORDEM material class [pick: all 1 = no material dependence; 0 = immune]
+cm_scale_nk = 1.0              # NaK droplets (liquid metal spheres): unknown
+cm_scale_ld = 1.0              # low density (< 2 g/cm3: plastics, MLI, composites)
+cm_scale_md = 1.0              # medium density (aluminium)
+cm_scale_hd = 1.0              # high density (steel, copper)
+cm_scale_in = 1.0              # intact objects
+fragment_prob_per_burst = 0.0  # [pick] probability a burst fragments the target (0 = off)
+fragment_count_mean = 2.0      # [pick] fragments >= 1 cm per fragmentation (Poisson)
+fragment_dv_sigma_m_s = 5.0    # [pick] per-axis fragment dv spread
 
 [atmosphere]
 model = "msis_table"           # msis_table (NRLMSIS 2.1 global mean vs F10.7) | exponential (static, legacy)
@@ -174,3 +184,8 @@ laser_rated_shots = 1.0e10           # pump diode / optics shot life
 hardware_usd_per_kg = 50000.0
 launch_usd_per_kg = 3000.0
 ops_usd_per_sat_yr = 2000000.0
+
+[knowledge]                          # orbit knowledge (talos.knowledge); all 0 = perfect knowledge
+od_sigma_pos_m = 0.0                 # per-axis state-estimate error at burst start (track + laser
+od_sigma_vel_m_s = 0.0               #   ranging: ~0.1 m / ~0.01 m/s, negligible; angles-only: much worse)
+pointing_bias_rad = 0.0              # per-axis constant pointing offset over a burst

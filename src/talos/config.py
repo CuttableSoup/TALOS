@@ -28,6 +28,7 @@ from .platform import ATPConfig, LaserConfig, Platform, ResourceConfig, baseline
 from .atmosphere import Atmosphere, AtmosphereConfig, decimal_year
 from .cost import CostConfig
 from .dynamics import DynamicsConfig, PopulationDynamics
+from .knowledge import Knowledge, KnowledgeConfig
 from .sun import SunConfig, SunEnvironment
 
 DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "config" / "baseline.toml"
@@ -117,6 +118,7 @@ class Scenario:
     dynamics: DynamicsConfig = field(default_factory=DynamicsConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     cost: CostConfig = field(default_factory=CostConfig)
+    knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
 
 
 # suffix -> (SI suffix, converter); longest suffix wins
@@ -230,6 +232,7 @@ class Built(NamedTuple):
     rng: np.random.Generator | None
     atmosphere: Atmosphere
     dynamics: PopulationDynamics | None
+    knowledge: Knowledge | None = None
 
 
 def make_atmosphere(sc: Scenario) -> Atmosphere:
@@ -287,7 +290,8 @@ def build(sc: Scenario) -> Built:
     dyn = (PopulationDynamics(sc.dynamics, p, float(p.n_real) / n, np.random.default_rng(sc.run.seed + 2),
                               source=source)
            if sc.dynamics.enabled else None)
-    return Built(plats, pop, sc.ablation, env, planner, rng, make_atmosphere(sc), dyn)
+    know = (Knowledge(sc.knowledge, np.random.default_rng(sc.run.seed + 5)) if sc.knowledge.active else None)
+    return Built(plats, pop, sc.ablation, env, planner, rng, make_atmosphere(sc), dyn, know)
 
 
 # scenario keys a resumed run may change relative to its checkpoint
@@ -321,6 +325,6 @@ def run_scenario(sc: Scenario, on_chunk=None, checkpoint_path=None, resume_path=
                                on_chunk=on_chunk, risk_shells=sc.risk.shells(),
                                checkpoint_path=checkpoint_path, checkpoint_every_s=sc.run.checkpoint_s,
                                checkpoint_meta={"scenario": scenario_dict(sc)}, resume=resume,
-                               predict_pulse_stride=sc.run.predict_pulse_stride)
+                               predict_pulse_stride=sc.run.predict_pulse_stride, knowledge=b.knowledge)
     finally:
         set_atmosphere(prev)

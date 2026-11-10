@@ -25,6 +25,8 @@ class DebrisPopulation:
     cd: float = 2.2
     albedo: np.ndarray | float = 0.1  # geometric (Lambertian) albedo, for optical detection
     epoch_s: np.ndarray | float = 0.0  # sim time [s] each object's elements refer to
+    material: np.ndarray | int = -1  # ORDEM class index (talos.ordem.MATERIALS); -1 = unknown
+    cm_scale: np.ndarray | float = 1.0  # laser coupling relative to the nominal Cm (0 = immune)
 
     def __post_init__(self) -> None:
         n = len(self.elements)
@@ -33,6 +35,8 @@ class DebrisPopulation:
         self.weight = np.broadcast_to(np.asarray(self.weight, float), (n,)).copy()
         self.albedo = np.broadcast_to(np.asarray(self.albedo, float), (n,)).copy()
         self.epoch_s = np.broadcast_to(np.asarray(self.epoch_s, float), (n,)).copy()
+        self.material = np.broadcast_to(np.asarray(self.material, np.int8), (n,)).copy()
+        self.cm_scale = np.broadcast_to(np.asarray(self.cm_scale, float), (n,)).copy()
         self.ids = np.arange(n) if self.ids is None else np.asarray(self.ids)
         if self.ids.shape != (n,):
             raise ValueError(f"ids shape {self.ids.shape} != ({n},)")
@@ -55,6 +59,12 @@ class DebrisPopulation:
         """Cd*A/m [m^2/kg]."""
         return self.cd / self.areal_density
 
+    def laser_areal_density(self, idx) -> np.ndarray:
+        """mu as seen by the laser for objects ``idx``: dv = eta1 Cm phi / mu with Cm scaled
+        per object (cm_scale), i.e. mu / cm_scale (inf for an immune object: no dv)."""
+        mu, s = self.areal_density[idx], self.cm_scale[idx]
+        return np.where(s > 0, mu / np.where(s > 0, s, 1.0), np.inf)
+
     @property
     def represented_count(self) -> float:
         return float(self.weight.sum())
@@ -69,6 +79,8 @@ class DebrisPopulation:
             cd=self.cd,
             albedo=self.albedo[idx],
             epoch_s=self.epoch_s[idx],
+            material=self.material[idx],
+            cm_scale=self.cm_scale[idx],
         )
 
     def append(self, other: "DebrisPopulation") -> "DebrisPopulation":
@@ -79,4 +91,5 @@ class DebrisPopulation:
         start = int(self.ids.max()) + 1 if len(self) else 0
         return DebrisPopulation(elements=el, diameter_m=cat("diameter_m"), areal_density=cat("areal_density"),
                                 weight=cat("weight"), ids=np.concatenate([self.ids, start + np.arange(len(other))]),
-                                cd=self.cd, albedo=cat("albedo"), epoch_s=cat("epoch_s"))
+                                cd=self.cd, albedo=cat("albedo"), epoch_s=cat("epoch_s"),
+                                material=cat("material"), cm_scale=cat("cm_scale"))

@@ -122,6 +122,30 @@ class SimResult:
         }
 
 
+def _ablation_fragments(pop: DebrisPopulation, j: int, el, tm: float, params: AblationParams,
+                        rng: np.random.Generator) -> DebrisPopulation | None:
+    """Fragments >= 1 cm shed by object ``j`` at sim time ``tm`` (state ``el`` after the burst):
+    Poisson count, sizes a fraction of the parent's, isotropic dv spread, NASA SBM A/m,
+    parent's material, albedo and sample weight. None if none survive."""
+    from .elements import elements_to_rv, rv_to_elements
+    from .population import sbm_area_to_mass
+
+    n = int(rng.poisson(params.fragment_count_mean))
+    if n == 0:
+        return None
+    lo, hi = params.fragment_size_frac
+    d = pop.diameter_m[j] * rng.uniform(lo, hi, n)
+    r, v = elements_to_rv(el)
+    fel = rv_to_elements(np.broadcast_to(r, (n, 3)).copy(),
+                         v + rng.normal(0.0, params.fragment_dv_sigma_m_s, (n, 3)))
+    keep = np.flatnonzero((d >= 0.01) & (fel.rp - R_EARTH > 150e3))
+    if not len(keep):
+        return None
+    d = d[keep]
+    return DebrisPopulation(elements=fel[keep], diameter_m=d, areal_density=1.0 / sbm_area_to_mass(d, rng),
+                            weight=pop.weight[j], albedo=pop.albedo[j], epoch_s=tm, material=pop.material[j])
+
+
 def _write_elements(pop: DebrisPopulation, j: int, el) -> None:
     for name in ("a", "e", "i", "raan", "argp", "M"):
         getattr(pop.elements, name)[j] = getattr(el, name)
@@ -147,6 +171,7 @@ def run_engagements(
     checkpoint_meta: dict | None = None,
     resume: dict | None = None,
     predict_pulse_stride: int = 1,
+    knowledge=None,
 ) -> SimResult:
     """Run the engagement loop. With ``planner`` (a CommitPlanner), committed
     objects take priority and fillers that would block a reservation are skipped.
@@ -168,7 +193,10 @@ def run_engagements(
     run); ``duration_s`` may be longer than the original. A resumed run reproduces the
     uninterrupted one exactly."""
     pop = copy.deepcopy(population)
-    pop0 = copy.deepcopy(population)  # initial state of every object (incl. ones added later)
+    pop.cm_scale = np.asarray(params.cm_scale_for(pop.material), float)  # laser coupling by material
+    pop0 = copy.deepcopy(pop)  # initial state of every object (incl. ones added later)
+    pending: list[DebrisPopulation] = []  # ablation fragments, added at the next chunk start
+    frag_stats = {"ablation_fragmentations": 0, "ablation_fragments": 0}
     removed = np.zeros(len(pop), dtype=bool)
     decayed = np.zeros(len(pop), dtype=bool)
     touched = np.zeros(len(pop), dtype=bool)  # engaged at least once
@@ -199,6 +227,9 @@ def run_engagements(
         pop, pop0, removed, decayed, touched = r["pop"], r["pop0"], r["removed"], r["decayed"], r["touched"]
         n_initial, ready_at, fire_time, events = r["n_initial"], r["ready_at"], r["fire_time"], r["events"]
         res_sim, res_t, c_start = r["res_sim"], r["res_t"], r["c0"]
+        pending, frag_stats = r.get("pending", []), r.get("frag_stats", frag_stats)
+        if knowledge is not None and r.get("knowledge") is not None:
+            knowledge.__dict__.update(r["knowledge"])
         for p in platforms:  # resource states; the illumination timeline is rebuilt for this duration
             st = r["state"][p.name]
             st.env = state[p.name].env
@@ -232,6 +263,8 @@ def run_engagements(
                                                        "stats": dict(dynamics.stats),
                                                        "rng": dynamics.rng.bit_generator.state},
             "planner": None if planner is None else {k: v for k, v in planner.__dict__.items() if k != "env"},
+            "pending": pending, "frag_stats": frag_stats,
+            "knowledge": None if knowledge is None else dict(knowledge.__dict__),
             "meta": checkpoint_meta or {},
         }
         tmp = f"{checkpoint_path}.tmp"
@@ -269,7 +302,21 @@ def run_engagements(
             removed, decayed = np.concatenate([removed, grow]), np.concatenate([decayed, grow]) | dmask
             touched = np.concatenate([touched, grow])
             if len(pop) > n_old:
-                pop0 = pop0.append(pop.subset(np.arange(n_old, len(pop))))
+                new = np.arange(n_old, len(pop))
+                pop.cm_scale[new] = params.cm_scale_for(pop.material[new])
+                pop0 = pop0.append(pop.subset(new))
+        if pending:  # fragments shed by ablation during the previous chunk
+            n_old = len(pop)
+            for f in pending:
+                pop = pop.append(f)
+            pending = []
+            new = np.arange(n_old, len(pop))
+            pop.cm_scale[new] = params.cm_scale_for(pop.material[new])
+            grow = np.zeros(len(new), dtype=bool)
+            removed, decayed, touched = (np.concatenate([x, grow]) for x in (removed, decayed, touched))
+            pop0 = pop0.append(pop.subset(new))
+        if knowledge is not None:
+            knowledge.new_chunk(float(c0))
         if planner is not None:
             planner.refresh(float(t[0]), pop, removed | decayed)
         # kernel element arguments for the whole population, shared by all platforms this chunk.
@@ -295,7 +342,9 @@ def run_engagements(
                 rs.advance(max(rs.t, t[k] + plat.atp.settle_s))
                 cands = evaluate_candidates(plat, pop, open_w, t, k, params, max_fire_s=rs.max_fire_s(),
                                             pulse_stride=predict_pulse_stride,
-                                            elem_args=None if cache is None else cache.args)
+                                            elem_args=None if cache is None else cache.args,
+                                            state_error=(knowledge.state_error if knowledge is not None
+                                                         and knowledge.has_state_error else None))
                 is_commit = False
                 if planner is not None and cands:
                     mine = [c for c in cands if planner.is_committed(c.debris_index)]
@@ -322,14 +371,22 @@ def run_engagements(
                 j = best.debris_index
                 tp = pulse_times(best.t_start, best.t_stop - best.t_start, plat.laser.prf_hz)
                 res = integrate_burst(
-                    *burst_states(plat, pop, j, tp), plat.laser, pop.areal_density[j], params,
+                    *burst_states(plat, pop, j, tp), plat.laser, float(pop.laser_areal_density(j)), params,
                     jitter_rad=plat.atp.jitter_rad if rng is not None else 0.0, rng=rng,
+                    pointing_bias=knowledge.pointing_bias() if knowledge is not None and rng is not None else None,
                 )
                 tm = 0.5 * (best.t_start + best.t_stop)
                 ep = float(pop.epoch_s[j])
                 el_tm = propagate(pop.elements[j], tm - ep, pop.ballistic_coeff[j], ep)
                 el_new = apply_dv(el_tm, res.dv_vec)
                 gone = bool(is_removed(el_new, pop.ballistic_coeff[j], tm))
+                if params.fragment_prob_per_burst > 0 and rng is not None \
+                        and rng.uniform() < params.fragment_prob_per_burst:
+                    f = _ablation_fragments(pop, j, el_new, tm, params, rng)
+                    frag_stats["ablation_fragmentations"] += 1
+                    if f is not None:
+                        pending.append(f)
+                        frag_stats["ablation_fragments"] += len(f)
                 _write_elements(pop, j, el_new)
                 pop.epoch_s[j] = tm
                 removed[j] |= gone
@@ -395,10 +452,11 @@ def run_engagements(
             "heater_kwh_per_day": float(np.mean([s.heater_j for s in sts])) / 3.6e6 * 86400.0 / duration_s,
             "brownout_s": float(np.mean([s.brownout_s for s in sts])),
         }
-    pop_stats = {}
+    pop_stats = dict(frag_stats) if params.fragment_prob_per_burst > 0 else {}
     if dynamics is not None:
         live = int((~(removed | decayed)).sum())
         pop_stats = {
+            **pop_stats,
             **dynamics.stats,
             "pop_initial": n_initial,
             "pop_final_live": live,

@@ -96,6 +96,7 @@ def evaluate_candidates(
     min_fired_frac: float = 0.1,
     pulse_stride: int = 1,
     elem_args: tuple | None = None,
+    state_error=None,
 ) -> list[Candidate]:
     """Deterministic burst predictions for windows open at grid index ``k``.
 
@@ -107,6 +108,9 @@ def evaluate_candidates(
     stride (speed vs accuracy; the fired burst itself is always integrated per pulse).
     ``elem_args``: ``_kernels.element_args`` of the whole population (current state of
     every candidate) -> fused numba prediction instead of the numpy path.
+    ``state_error(js) -> (dr (n, 3), dv (n, 3))``: the platform's orbit-knowledge error for
+    each candidate at the burst start; predictions (geometry and dv still needed) then use
+    the estimated states, extrapolated linearly over the burst (numpy path).
     """
     las, res = platform.laser, platform.resources
     dt = t_grid[1] - t_grid[0] if len(t_grid) > 1 else 1.0
@@ -128,7 +132,23 @@ def evaluate_candidates(
     active = tp[:, None] < t1[None, :] - 1e-9
     r_s, _ = states_at(platform.orbit, tp)
     sub = population.elements[js]
-    if elem_args is not None and params.cm_model in ("plasma", "constant"):
+    mu_l = np.ascontiguousarray(population.laser_areal_density(js), float)
+    need = None
+    if state_error is not None:
+        from .elements import elements_to_rv, rv_to_elements
+        from .engagement import predict_bursts as _pb
+        from .propagator import propagate
+
+        dr, dv = state_error(js)
+        r_d, v_d = states_at(sub, tp, population.ballistic_coeff[js], epoch=population.epoch_s[js])
+        r_d = r_d + dr[None] + dv[None] * (tp - t0)[:, None, None]
+        v_d = v_d + dv[None]
+        pred = _pb(r_s, r_d, v_d, active, las, mu_l, params)
+        ep = population.epoch_s[js]
+        r0, v0 = elements_to_rv(propagate(sub, t0 - ep, population.ballistic_coeff[js], ep))
+        est = rv_to_elements(r0 + dr, v0 + dv)
+        need = dv_to_remove(est.a, est.e)
+    elif elem_args is not None and params.cm_model in ("plasma", "constant"):
         from . import _kernels
         from .engagement import BurstPrediction, fluence
 
@@ -140,15 +160,16 @@ def evaluate_candidates(
             np.ascontiguousarray(js, np.int64), float(fluence(1.0, las)), th, opt, params.cm,
             params.cm_model == "plasma", params.plasma_exponent,
             params.eta1_nominal * float(np.cos(params.off_axis_mean_rad)),
-            np.ascontiguousarray(population.areal_density[js], float), *elem_args)
+            mu_l, *elem_args)
         pred = BurstPrediction(dvv, retro, nf, nf * las.pulse_energy_j)
     else:
         r_d, v_d = states_at(sub, tp, population.ballistic_coeff[js], epoch=population.epoch_s[js])
-        pred = predict_bursts(r_s, r_d, v_d, active, las, population.areal_density[js], params)
+        pred = predict_bursts(r_s, r_d, v_d, active, las, mu_l, params)
     if pulse_stride > 1:
         m = int(pulse_stride)
         pred = type(pred)(pred.dv_vec * m, pred.dv_retrograde * m, pred.n_fired * m, pred.optical_energy_j * m)
-    need = dv_to_remove(sub.a, sub.e)
+    if need is None:
+        need = dv_to_remove(sub.a, sub.e)
 
     keep = (pred.n_fired >= min_fired) & (pred.dv_retrograde > 0)
     return [

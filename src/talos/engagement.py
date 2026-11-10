@@ -39,6 +39,29 @@ class AblationParams:
     # Thrust deflection from beam axis ~ N(mean, sigma) clipped to [0, 90 deg], random azimuth.
     off_axis_mean_rad: float = np.deg2rad(45.0)
     off_axis_sigma_rad: float = np.deg2rad(15.0)  # PLACEHOLDER spread
+    # Target attitude: "per_pulse" draws eta1 and the thrust direction for every pulse;
+    # "per_burst" holds them for the whole burst (slow tumble: same face lit throughout).
+    attitude_model: str = "per_pulse"
+    # Cm relative to nominal by ORDEM material class (NaK, low / medium / high density,
+    # intact); PICKS, all 1 = no material dependence. 0 = immune to this laser.
+    cm_scale_nk: float = 1.0
+    cm_scale_ld: float = 1.0
+    cm_scale_md: float = 1.0
+    cm_scale_hd: float = 1.0
+    cm_scale_in: float = 1.0
+    # Fragmentation by ablation (PICKS; 0 = off): probability per burst that the target
+    # sheds fragments; mean number >= 1 cm (Poisson), size fraction of the parent, dv spread.
+    fragment_prob_per_burst: float = 0.0
+    fragment_count_mean: float = 2.0
+    fragment_size_frac: tuple[float, float] = (0.3, 0.7)
+    fragment_dv_sigma_m_s: float = 5.0
+
+    def cm_scale_for(self, material) -> np.ndarray:
+        """Per-object Cm scale from ORDEM class indices (-1 / unknown -> medium density)."""
+        table = np.array([self.cm_scale_nk, self.cm_scale_ld, self.cm_scale_md, self.cm_scale_hd,
+                          self.cm_scale_in])
+        m = np.asarray(material)
+        return np.where(m >= 0, table[np.clip(m, 0, 4)], self.cm_scale_md)
 
     @property
     def eta1_nominal(self) -> float:
@@ -125,12 +148,15 @@ def integrate_burst(
     params: AblationParams = AblationParams(),
     jitter_rad: float = 0.0,
     rng: np.random.Generator | None = None,
+    pointing_bias: np.ndarray | None = None,
 ) -> BurstResult:
     """Integrate one burst given states (P, 3) sampled at each pulse time.
 
     With ``rng=None`` the result is the deterministic expectation (eta1 mean,
     cos(mean off-axis angle) along the LOS, no jitter). With an rng, eta1, off-axis deflection and pointing jitter
-    are sampled per pulse.
+    are sampled per pulse (eta1 and deflection per burst with ``params.attitude_model = "per_burst"``).
+    ``pointing_bias``: (2,) constant pointing offset [rad] for the burst (orbit-knowledge /
+    centroiding error), added to the per-pulse jitter.
     """
     d = r_deb - r_sat
     R = np.linalg.norm(d, axis=-1)
@@ -143,14 +169,29 @@ def integrate_burst(
         eta1 = np.full(P, params.eta1_nominal)
         dirs = u * np.cos(params.off_axis_mean_rad)
     else:
-        if jitter_rad > 0:
+        if pointing_bias is not None and np.any(pointing_bias != 0):
+            # bias + 2-axis Gaussian jitter, Gaussian spot of 1/e^2 radius ~ spot_diameter/2
+            ang = np.asarray(pointing_bias, float)[None, :] + jitter_rad * rng.standard_normal((P, 2))
+            offset = R * np.hypot(ang[:, 0], ang[:, 1])
+            w = spot_diameter(R, laser) / 2.0
+            phi = phi * np.exp(-2.0 * (offset / w) ** 2)
+        elif jitter_rad > 0:
             # Radial pointing offset (Rayleigh for 2-axis Gaussian jitter) on a
             # Gaussian-profile spot of 1/e^2 radius ~ spot_diameter/2.
             offset = R * jitter_rad * rng.rayleigh(size=P)
             w = spot_diameter(R, laser) / 2.0
             phi = phi * np.exp(-2.0 * (offset / w) ** 2)
-        eta1 = params.sample_eta1(rng, P)
-        dirs = _deflect(u, params.sample_off_axis(rng, P), rng)
+        if params.attitude_model == "per_burst":
+            eta1 = np.full(P, params.sample_eta1(rng, 1)[0])
+            theta = np.full(P, params.sample_off_axis(rng, 1)[0])
+            w = np.cross(u, rng.normal(size=3)[None, :])  # one deflection azimuth for the burst
+            w /= np.linalg.norm(w, axis=-1, keepdims=True)
+            dirs = np.cos(theta)[:, None] * u + np.sin(theta)[:, None] * w
+        elif params.attitude_model == "per_pulse":
+            eta1 = params.sample_eta1(rng, P)
+            dirs = _deflect(u, params.sample_off_axis(rng, P), rng)
+        else:
+            raise ValueError(f"attitude_model {params.attitude_model!r}: expected per_pulse or per_burst")
 
     fire = phi >= params.threshold_fluence
     cm = coupling_coefficient(phi, params)

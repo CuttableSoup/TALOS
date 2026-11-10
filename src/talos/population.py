@@ -133,7 +133,7 @@ def ordem_population(
     else:
         raise ValueError(f"areal_density_model {areal_density_model!r}: expected fixed, sphere or sbm")
     pop = DebrisPopulation(elements=el, diameter_m=s["diameter_m"], areal_density=mu,
-                           weight=s["represented"] / n, epoch_s=epoch_s)
+                           weight=s["represented"] / n, epoch_s=epoch_s, material=s["material"])
     pop.albedo = np.clip(albedo_median * np.exp(albedo_log_sigma * rng.standard_normal(n)), 0.02, 0.6)
     if min_lifetime_yr is not None:
         life = orbital_lifetime(el.a, el.e, pop.ballistic_coeff, max_s=2 * min_lifetime_yr * YEAR)
