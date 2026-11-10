@@ -12,6 +12,8 @@ Outputs (in ``out_dir``):
   * events/<name>.partial.parquet: event checkpoint every ``checkpoint_s`` of sim
     time, so a long run can be inspected (or salvaged) before it finishes; removed
     once the final events file is written.
+  * checkpoints/<name>.pkl: full sim state every ``run.checkpoint_s`` (default 30 d);
+    ``RunConfig(..., resume=path)`` continues or extends the run from it.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ class RunConfig:
     name: str
     config: str | None = None  # TOML path; None -> config/baseline.toml
     overrides: Mapping[str, Any] = field(default_factory=dict)
+    resume: str | None = None  # checkpoint to continue from (see run_scenario)
 
     def scenario(self) -> Scenario:
         return load_scenario(self.config, {"run.name": self.name, **self.overrides})
@@ -55,14 +58,20 @@ class RunMonitor:
         self.log_every_s, self.checkpoint_s = log_every_s, checkpoint_s
         self.next_log, self.next_ckpt = log_every_s, checkpoint_s
         self.t0 = time.perf_counter()
+        self.t_first = None  # sim time of the first chunk end seen (a resumed run starts late)
         self.log_path.write_text(f"# {name}: sim_day wall_h engagements useful removed live_pop eta_h\n")
 
     def __call__(self, t_s, events, removed, decayed) -> None:
         end = t_s >= self.duration_s
+        if self.t_first is None:
+            self.t_first = t_s
+            self.next_log = max(self.next_log, (t_s // self.log_every_s + 1) * self.log_every_s)
+            self.next_ckpt = max(self.next_ckpt, (t_s // self.checkpoint_s + 1) * self.checkpoint_s)
         if t_s >= self.next_log or end:
             wall = time.perf_counter() - self.t0
             useful = sum(1 for e in events if e.n_fired > 0 and e.dv_retrograde > 0)
-            eta = wall * (self.duration_s - t_s) / t_s if t_s > 0 else float("nan")
+            done = t_s - self.t_first
+            eta = wall * (self.duration_s - t_s) / done if done > 0 else float("nan")
             with self.log_path.open("a") as f:
                 f.write(f"{t_s / DAY:8.2f} {wall / 3600:7.3f} {len(events):8d} {useful:8d} "
                         f"{int(removed.sum()):6d} {int((~(removed | decayed)).sum()):7d} {eta / 3600:7.2f}\n")
@@ -82,7 +91,11 @@ def run_one(cfg: RunConfig, out_dir: str | os.PathLike | None = None) -> tuple[d
     t0 = time.perf_counter()
     sc = cfg.scenario()
     mon = RunMonitor(cfg.name, out_dir, sc.run.duration_s) if out_dir is not None else None
-    res = run_scenario(sc, on_chunk=mon)
+    ckpt = None
+    if out_dir is not None and sc.run.checkpoint_s:
+        (Path(out_dir) / "checkpoints").mkdir(parents=True, exist_ok=True)
+        ckpt = Path(out_dir) / "checkpoints" / f"{cfg.name}.pkl"
+    res = run_scenario(sc, on_chunk=mon, checkpoint_path=ckpt, resume_path=cfg.resume)
     ev_c = [e for e in res.events if e.committed]
     row = {"name": cfg.name, "config": cfg.config or "baseline",
            **{f"ovr.{k}": (str(v) if isinstance(v, (tuple, list)) else v) for k, v in cfg.overrides.items()},

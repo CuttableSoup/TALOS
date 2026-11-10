@@ -42,6 +42,7 @@ class RunSettings:
     score: str = "removal_progress"
     dt_s: float = 1.0
     chunk_s: float = 600.0
+    checkpoint_s: float | None = 30 * 86400.0  # full-state checkpoint interval (sweep/out_dir runs)
 
 
 @dataclass(frozen=True)
@@ -281,11 +282,27 @@ def build(sc: Scenario) -> Built:
     return Built(plats, pop, sc.ablation, env, planner, rng, make_atmosphere(sc), dyn)
 
 
-def run_scenario(sc: Scenario, on_chunk=None):
-    """Install the scenario atmosphere, build, run, restore the previous atmosphere."""
-    from .propagator import get_atmosphere, set_atmosphere
-    from .simulation import run_engagements
+# scenario keys a resumed run may change relative to its checkpoint
+RESUME_MAY_DIFFER = ("run.name", "run.duration_s", "run.checkpoint_s")
 
+
+def run_scenario(sc: Scenario, on_chunk=None, checkpoint_path=None, resume_path=None):
+    """Install the scenario atmosphere, build, run, restore the previous atmosphere.
+
+    ``checkpoint_path``: write full-state checkpoints there every ``run.checkpoint_s``.
+    ``resume_path``: continue from such a checkpoint. The scenario must match the one that
+    wrote it apart from RESUME_MAY_DIFFER (e.g. extend a 1-yr run to 2 yr)."""
+    from .propagator import get_atmosphere, set_atmosphere
+    from .simulation import load_checkpoint, run_engagements
+
+    resume = None
+    if resume_path is not None:
+        resume = load_checkpoint(resume_path)
+        old, new = resume["meta"].get("scenario", {}), scenario_dict(sc)
+        diff = sorted(k for k in set(old) | set(new) if k not in RESUME_MAY_DIFFER and old.get(k) != new.get(k))
+        if diff:
+            raise ValueError(f"checkpoint {resume_path} was written by a different scenario: "
+                             + ", ".join(f"{k}: {old.get(k)!r} -> {new.get(k)!r}" for k in diff))
     prev = get_atmosphere()
     set_atmosphere(make_atmosphere(sc))
     try:
@@ -293,6 +310,8 @@ def run_scenario(sc: Scenario, on_chunk=None):
         return run_engagements(b.platforms, b.population, sc.run.duration_s, dt=sc.run.dt_s,
                                chunk_s=sc.run.chunk_s, params=b.params, rng=b.rng, score=sc.run.score,
                                planner=b.planner, env=b.env, dynamics=b.dynamics,
-                               on_chunk=on_chunk, risk_shells=sc.risk.shells())
+                               on_chunk=on_chunk, risk_shells=sc.risk.shells(),
+                               checkpoint_path=checkpoint_path, checkpoint_every_s=sc.run.checkpoint_s,
+                               checkpoint_meta={"scenario": scenario_dict(sc)}, resume=resume)
     finally:
         set_atmosphere(prev)

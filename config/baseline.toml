@@ -17,6 +17,7 @@ stochastic = true              # sample eta1 / thrust angle / jitter per burst
 score = "removal_progress"     # removal_progress | closest_to_removal | dv_per_energy
 dt_s = 1.0                     # fine screening step
 chunk_s = 600.0                # scheduling chunk; each object engaged at most once per chunk
+checkpoint_days = 30.0         # full-state checkpoint (runs with an out_dir): resume / extend later
 
 [constellation]
 n_sats = 4

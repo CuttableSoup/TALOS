@@ -4,7 +4,10 @@
         [--config path.toml] [--set section.key=value ...]
 
 Values in --set are parsed as TOML (numbers, true/false, "strings", [lists]).
-Progress: runs/x/logs/<name>.log; events: runs/x/events/<name>.parquet.
+Progress: runs/x/logs/<name>.log; events: runs/x/events/<name>.parquet;
+full-state checkpoints every run.checkpoint_days (30) in runs/x/checkpoints/<name>.pkl.
+Continue / extend: run_baseline.py 730 --out runs/y --resume runs/x/checkpoints/base.pkl
+(same --config/--set as the original run; only the duration may change).
 """
 
 import argparse
@@ -32,7 +35,9 @@ if __name__ == "__main__":  # required on Windows (spawned workers re-import thi
     ap.add_argument("--threads", type=int, default=32)
     ap.add_argument("--config", default=None)
     ap.add_argument("--set", nargs="*", default=[], dest="sets")
+    ap.add_argument("--resume", default=None, help="checkpoint .pkl to continue (or extend) from")
     a = ap.parse_args()
-    cfg = RunConfig(a.name, config=a.config, overrides={"run.duration_days": a.days, **parse_set(a.sets)})
+    cfg = RunConfig(a.name, config=a.config, overrides={"run.duration_days": a.days, **parse_set(a.sets)},
+                    resume=a.resume)
     df = run_sweep([cfg], out_dir=a.out, n_jobs=1, threads_per_job=a.threads)
     print(df.T.to_string())

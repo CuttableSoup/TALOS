@@ -142,6 +142,10 @@ def run_engagements(
     dynamics: "PopulationDynamics | None" = None,
     on_chunk=None,
     risk_shells: "dict[str, tuple[float, float]] | None" = None,
+    checkpoint_path=None,
+    checkpoint_every_s: float | None = None,
+    checkpoint_meta: dict | None = None,
+    resume: dict | None = None,
 ) -> SimResult:
     """Run the engagement loop. With ``planner`` (a CommitPlanner), committed
     objects take priority and fillers that would block a reservation are skipped.
@@ -154,7 +158,14 @@ def run_engagements(
     and gains new objects every ``dynamics.cfg.update_s``; naturally decayed
     objects leave the screening set but are not credited as removals.
     ``on_chunk(t_s, events, removed, decayed)`` is called after every chunk (progress
-    logging / event checkpoints); it must not modify its arguments."""
+    logging / event checkpoints); it must not modify its arguments.
+
+    Checkpoints: with ``checkpoint_path`` and ``checkpoint_every_s`` the full loop state is
+    pickled at chunk starts every ``checkpoint_every_s`` (plus ``checkpoint_meta``, e.g. the
+    scenario). ``resume`` (a dict from ``load_checkpoint``) continues from that state with
+    the same inputs (platforms, population, rng, dynamics, planner as built for the original
+    run); ``duration_s`` may be longer than the original. A resumed run reproduces the
+    uninterrupted one exactly."""
     pop = copy.deepcopy(population)
     pop0 = copy.deepcopy(population)  # initial state of every object (incl. ones added later)
     removed = np.zeros(len(pop), dtype=bool)
@@ -178,6 +189,53 @@ def run_engagements(
     shells = np.array([risk_shells[n] for n in names], float) if names else None
     res_sim = np.zeros((len(pop), len(names)))  # shell residence during the run [s]
     res_t = 0.0  # residence accumulated up to this sim time
+    c_start = 0.0
+    if resume is not None:
+        r = resume
+        if r["chunk_s"] != chunk_s or r["dt"] != dt or r["platforms"] != [p.name for p in platforms]:
+            raise ValueError("checkpoint was written with a different chunk_s / dt / constellation")
+        pop, pop0, removed, decayed, touched = r["pop"], r["pop0"], r["removed"], r["decayed"], r["touched"]
+        n_initial, ready_at, fire_time, events = r["n_initial"], r["ready_at"], r["fire_time"], r["events"]
+        res_sim, res_t, c_start = r["res_sim"], r["res_t"], r["c0"]
+        for p in platforms:  # resource states; the illumination timeline is rebuilt for this duration
+            st = r["state"][p.name]
+            st.env = state[p.name].env
+            state[p.name] = st
+        if rng is not None:
+            rng.bit_generator.state = r["rng"]
+        if dynamics is not None:
+            dynamics.next_update, dynamics.stats = r["dynamics"]["next_update"], r["dynamics"]["stats"]
+            dynamics.rng.bit_generator.state = r["dynamics"]["rng"]
+        if planner is not None:
+            planner.__dict__.update(r["planner"])
+            planner.env = env
+    next_ckpt = (c_start // checkpoint_every_s + 1) * checkpoint_every_s if checkpoint_every_s else np.inf
+
+    def save_checkpoint(c0: float) -> None:
+        import os
+        import pickle
+
+        sts = {}
+        for name, st in state.items():  # drop the (large, rebuildable) illumination timeline
+            c = copy.copy(st)
+            c.env = None
+            sts[name] = c
+        blob = {
+            "version": 1, "c0": c0, "chunk_s": chunk_s, "dt": dt, "platforms": [p.name for p in platforms],
+            "pop": pop, "pop0": pop0, "removed": removed, "decayed": decayed, "touched": touched,
+            "n_initial": n_initial, "ready_at": ready_at, "fire_time": fire_time, "events": events,
+            "res_sim": res_sim, "res_t": res_t, "state": sts,
+            "rng": rng.bit_generator.state if rng is not None else None,
+            "dynamics": None if dynamics is None else {"next_update": dynamics.next_update,
+                                                       "stats": dict(dynamics.stats),
+                                                       "rng": dynamics.rng.bit_generator.state},
+            "planner": None if planner is None else {k: v for k, v in planner.__dict__.items() if k != "env"},
+            "meta": checkpoint_meta or {},
+        }
+        tmp = f"{checkpoint_path}.tmp"
+        with open(tmp, "wb") as fh:
+            pickle.dump(blob, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp, checkpoint_path)
 
     def accrue(t_now: float) -> None:
         """Shell residence of live objects over [res_t, t_now], elements held at their current values."""
@@ -193,7 +251,10 @@ def run_engagements(
             res_sim[near] += shell_fraction(el.a[near], el.e[near], shells) * (t_now - res_t)
         res_t = t_now
 
-    for c0 in np.arange(0.0, duration_s, chunk_s):
+    for c0 in np.arange(c_start, duration_s, chunk_s):
+        if checkpoint_path is not None and c0 >= next_ckpt - 1e-6:
+            save_checkpoint(float(c0))
+            next_ckpt = (c0 // checkpoint_every_s + 1) * checkpoint_every_s
         t = c0 + np.arange(0.0, min(chunk_s, duration_s - c0), dt)
         if c0 - res_t >= 86400.0 - 1e-6:
             accrue(float(c0))
@@ -339,3 +400,15 @@ def run_engagements(
     return SimResult(events, duration_s, [p.name for p in platforms], fire_time, removed, max_duty, pop, li, lf,
                      dict(planner.stats, committed_now=len(planner.committed)) if planner is not None else {},
                      env_stats, pop_stats, names, res_i, res_f)
+
+
+def load_checkpoint(path) -> dict:
+    """Read a checkpoint written by ``run_engagements(checkpoint_path=...)``.
+    Only load files you wrote yourself: this is a pickle."""
+    import pickle
+
+    with open(path, "rb") as fh:
+        blob = pickle.load(fh)
+    if blob.get("version") != 1:
+        raise ValueError(f"unsupported checkpoint version {blob.get('version')!r}")
+    return blob
