@@ -27,16 +27,18 @@ def test_js_propagator_matches_python(tmp_path):
                         argp=rng.uniform(0, 2 * np.pi, n), M=rng.uniform(0, 2 * np.pi, n))
     ep = rng.uniform(-1e5, 1e5, n)
     t = rng.uniform(0, 7 * 86400, n)
-    want, _ = elements_to_rv(propagate(el, t - ep))
+    adot = -rng.uniform(0, 0.06, n)  # up to ~5 km/day, the fastest-decaying fragments
+    adot[::2] = 0.0
+    want, _ = elements_to_rv(propagate(el, t - ep, adot=adot))
     js = tmp_path / "check.js"
     js.write_text(
         f"const O = require({json.dumps(str(_VIEWER_DIR / 'orbit.js'))});\n"
         "const d = JSON.parse(require('fs').readFileSync(0, 'utf8'));\n"
         "const n = d.t.length, el = {}; for (const k of ['a','e','i','raan','argp','M','ep']) el[k] = Float64Array.from(d[k]);\n"
-        "const rates = new Float64Array(3 * n), out = new Float64Array(3 * n);\n"
-        "for (let k = 0; k < n; k++) { O.j2Rates(el.a[k], el.e[k], el.i[k], rates, k); O.positionAt(el, rates, k, d.t[k], out, 3 * k); }\n"
+        "const rates = new Float64Array(3 * n), out = new Float64Array(3 * n), adot = Float64Array.from(d.adot);\n"
+        "for (let k = 0; k < n; k++) { O.j2Rates(el.a[k], el.e[k], el.i[k], rates, k); O.positionAt(el, rates, k, d.t[k], out, 3 * k, adot); }\n"
         "process.stdout.write(JSON.stringify(Array.from(out)));\n")
-    inp = {k: getattr(el, k).tolist() for k in ("a", "e", "i", "raan", "argp", "M")} | {"ep": ep.tolist(), "t": t.tolist()}
+    inp = {k: getattr(el, k).tolist() for k in ("a", "e", "i", "raan", "argp", "M")} | {"ep": ep.tolist(), "t": t.tolist(), "adot": adot.tolist()}
     out = subprocess.run(["node", str(js)], input=json.dumps(inp), capture_output=True, text=True, check=True)
     got = np.array(json.loads(out.stdout)).reshape(n, 3)
     assert np.max(np.linalg.norm(got - want, axis=1)) < 1e-3  # metres

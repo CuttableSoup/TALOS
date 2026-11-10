@@ -162,6 +162,7 @@ def _ablation_fragments(pop: DebrisPopulation, j: int, el, tm: float, params: Ab
 def _write_elements(pop: DebrisPopulation, j: int, el) -> None:
     for name in ("a", "e", "i", "raan", "argp", "M"):
         getattr(pop.elements, name)[j] = getattr(el, name)
+    pop.invalidate_drag(j)
 
 
 def run_engagements(
@@ -398,7 +399,7 @@ def run_engagements(
                 )
                 tm = 0.5 * (best.t_start + best.t_stop)
                 ep = float(pop.epoch_s[j])
-                el_tm = propagate(pop.elements[j], tm - ep, pop.ballistic_coeff[j], ep)
+                el_tm = propagate(pop.elements[j], tm - ep, adot=pop.drag_adot(j))
                 el_new = apply_dv(el_tm, res.dv_vec)
                 gone = bool(is_removed(el_new, pop.ballistic_coeff[j], tm))
                 if params.fragment_prob_per_burst > 0 and rng is not None \

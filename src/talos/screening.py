@@ -250,7 +250,7 @@ class ChunkCache:
 def chunk_cache(population: DebrisPopulation) -> ChunkCache:
     el = population.elements
     c = lambda x: np.ascontiguousarray(x, dtype=float)
-    return ChunkCache(_kernels.element_args(el, population.ballistic_coeff, population.epoch_s),
+    return ChunkCache(_kernels.element_args(el, epoch=population.epoch_s, adot=population.drag_adot()),
                       c(el.rp), c(el.ra), c(max_speed(el)), c(0.5 * population.diameter_m), c(population.albedo))
 
 
@@ -320,7 +320,7 @@ def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_
     rmax = atp.engage_range_max_m
     if cache is None:  # kernel inputs for the subset; sel indexes into it
         sub = population.elements[idx]
-        args = _kernels.element_args(sub, population.ballistic_coeff[idx], population.epoch_s[idx])
+        args = _kernels.element_args(sub, epoch=population.epoch_s[idx], adot=population.drag_adot(idx))
         vdeb = np.ascontiguousarray(max_speed(sub), dtype=float)
         radius = np.ascontiguousarray(0.5 * population.diameter_m[idx], dtype=float)
         albedo = np.ascontiguousarray(population.albedo[idx], dtype=float)

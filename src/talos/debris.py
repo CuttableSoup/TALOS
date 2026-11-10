@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -27,6 +27,9 @@ class DebrisPopulation:
     epoch_s: np.ndarray | float = 0.0  # sim time [s] each object's elements refer to
     material: np.ndarray | int = -1  # ORDEM class index (talos.ordem.MATERIALS); -1 = unknown
     cm_scale: np.ndarray | float = 1.0  # laser coupling relative to the nominal Cm (0 = immune)
+    # cached orbit-averaged da/dt [m/s] at each object's element epoch (NaN: not computed);
+    # see drag_adot / invalidate_drag
+    adot_cache: np.ndarray | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         n = len(self.elements)
@@ -38,6 +41,8 @@ class DebrisPopulation:
         self.material = np.broadcast_to(np.asarray(self.material, np.int8), (n,)).copy()
         self.cm_scale = np.broadcast_to(np.asarray(self.cm_scale, float), (n,)).copy()
         self.ids = np.arange(n) if self.ids is None else np.asarray(self.ids)
+        self.adot_cache = (np.full(n, np.nan) if self.adot_cache is None
+                           else np.broadcast_to(np.asarray(self.adot_cache, float), (n,)).copy())
         if self.ids.shape != (n,):
             raise ValueError(f"ids shape {self.ids.shape} != ({n},)")
         if np.any(self.areal_density <= 0):
@@ -65,6 +70,32 @@ class DebrisPopulation:
         mu, s = self.areal_density[idx], self.cm_scale[idx]
         return np.where(s > 0, mu / np.where(s > 0, s, 1.0), np.inf)
 
+    def drag_adot(self, idx=None) -> np.ndarray:
+        """Orbit-averaged da/dt [m/s] at each object's element epoch, the drift used between
+        dynamics steps (talos.propagator.drag_da_dt). Cached; anything that writes an
+        object's elements or epoch must call invalidate_drag for it."""
+        c = getattr(self, "adot_cache", None)
+        if c is None or c.shape != (len(self),):  # e.g. unpickled from before the cache existed
+            c = self.adot_cache = np.full(len(self), np.nan)
+        sel = np.arange(len(self)) if idx is None else np.atleast_1d(np.asarray(idx))
+        miss = sel[np.isnan(c[sel])]
+        if len(miss):
+            from .propagator import drag_da_dt
+
+            el = self.elements
+            c[miss] = drag_da_dt(el.a[miss], self.ballistic_coeff[miss], self.epoch_s[miss], el.e[miss])
+        return c if idx is None else (c[idx] if np.ndim(idx) else c[int(idx)])
+
+    def invalidate_drag(self, idx=None) -> None:
+        """Mark cached drag rates stale for ``idx`` (all if None) after their elements changed."""
+        c = getattr(self, "adot_cache", None)
+        if c is None or c.shape != (len(self),):
+            self.adot_cache = np.full(len(self), np.nan)
+        elif idx is None:
+            c[:] = np.nan
+        else:
+            c[idx] = np.nan
+
     @property
     def represented_count(self) -> float:
         return float(self.weight.sum())
@@ -81,6 +112,7 @@ class DebrisPopulation:
             epoch_s=self.epoch_s[idx],
             material=self.material[idx],
             cm_scale=self.cm_scale[idx],
+            adot_cache=self._cache_view()[idx],
         )
 
     def append(self, other: "DebrisPopulation") -> "DebrisPopulation":
@@ -92,4 +124,10 @@ class DebrisPopulation:
         return DebrisPopulation(elements=el, diameter_m=cat("diameter_m"), areal_density=cat("areal_density"),
                                 weight=cat("weight"), ids=np.concatenate([self.ids, start + np.arange(len(other))]),
                                 cd=self.cd, albedo=cat("albedo"), epoch_s=cat("epoch_s"),
-                                material=cat("material"), cm_scale=cat("cm_scale"))
+                                material=cat("material"), cm_scale=cat("cm_scale"),
+                                adot_cache=np.concatenate([self._cache_view(), other._cache_view()]))
+
+    def _cache_view(self) -> np.ndarray:
+        """The drag-rate cache as stored (NaN where not computed), without filling it."""
+        c = getattr(self, "adot_cache", None)
+        return c if c is not None and c.shape == (len(self),) else np.full(len(self), np.nan)

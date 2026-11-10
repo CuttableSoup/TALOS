@@ -191,11 +191,11 @@
     out.x = m[0] * x + m[3] * y + m[6] * z; out.y = m[1] * x + m[4] * y + m[7] * z; out.z = m[2] * x + m[5] * y + m[8] * z;
     return out;
   };
-  const objFixed = (o, t, out) => { O.positionAt(st, rates, o, t, R, 0); return fixedOf(R[0], R[1], R[2], out); };
+  const objFixed = (o, t, out) => { O.positionAt(st, rates, o, t, R, 0, adot); return fixedOf(R[0], R[1], R[2], out); };
   const satFixed = (p, t, out) => { O.positionAt(plat, platRates, p, t, R, 0); return fixedOf(R[0], R[1], R[2], out); };
   const ringPos = new Map(); // polyline -> its own Cartesian3 array
   function setRing(line, o, t) {
-    O.orbitRing(st, rates, o, t, RING_N, ring);
+    O.orbitRing(st, rates, o, t, RING_N, ring, adot);
     let pos = ringPos.get(line);
     if (!pos) { pos = Array.from({ length: RING_N }, () => new C.Cartesian3()); ringPos.set(line, pos); }
     for (let j = 0; j < RING_N; j++) fixedOf(ring[3 * j], ring[3 * j + 1], ring[3 * j + 2], pos[j]);

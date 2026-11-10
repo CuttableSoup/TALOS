@@ -2,8 +2,9 @@
 
     meta = render_window(sc, events, t0_s, t1_s, "runs/x/render/day0.html")
 
-The viewer propagates every object in the browser (J2 secular, no drag; the mean-element
-model of talos.propagator) and replays, in time order, (a) each burst's post-burst
+The viewer propagates every object in the browser with the sim's mean-element model
+(talos.propagator.propagate: J2 secular angles, a drifting linearly at each object's
+orbit-averaged da/dt between decay steps) and replays, in time order, (a) each burst's post-burst
 elements (``EngagementEvent.a_after_m`` ...) and (b) the population-dynamics steps (daily
 drag decay and re-epoch of every live object, natural decays, new objects).
 
@@ -92,6 +93,7 @@ class Replay:
             for name, v in zip(_EL, self.after[self.k]):
                 getattr(self.pop.elements, name)[j] = v
             self.pop.epoch_s[j] = float(ev.t_elements_s.iat[self.k])
+            self.pop.invalidate_drag(j)
             self.removed[j] |= bool(ev.removed.iat[self.k])
             self.touched[j] = True
             self.k += 1
@@ -201,8 +203,11 @@ def _export(sc, events, t0_s, t1_s, checkpoint, max_background, seed):
     el0 = np.zeros((N, 6))
     ep0 = np.zeros(N)
     in0 = idx < n_t0
-    e0 = propagate(base_el[idx[in0]], t0_s - base_ep[idx[in0]])
-    el0[in0] = np.stack([getattr(e0, k) for k in _EL], axis=1)
+    # objects keep the sim's own element epoch (ep0 < 0 when before t0, kept in float64): the
+    # sim's J2 angle rates come from the epoch elements and a drifts from there, which
+    # re-epoching to t0 would not reproduce
+    el0[in0] = np.stack([getattr(base_el, k)[idx[in0]] for k in _EL], axis=1)
+    ep0[in0] = base_ep[idx[in0]] - t0_s
     late = idx[~in0]
     if len(late):
         el0[~in0] = np.stack([getattr(rp.pop0.elements, k)[late] for k in _EL], axis=1)
@@ -290,10 +295,12 @@ def _step_times(rp: Replay, t1_s: float) -> list[float]:
 
 
 SNAP_TOL_KM = 0.5  # correct the viewer's own decay step where it would be off by more than this
+_GAP_SAMPLES = 6  # times per step at which that is checked (radial errors swing once per orbit)
 
 
-def _rv(el: np.ndarray, dt) -> np.ndarray:
-    r, _ = elements_to_rv(propagate(KeplerElements(*el.T), dt))
+def _rv(el: np.ndarray, dt, adot=None) -> np.ndarray:
+    """Positions as the viewer draws them (orbit.js positionAt): J2 angles, a drifting at adot."""
+    r, _ = elements_to_rv(propagate(KeplerElements(*el.T), dt, adot=adot))
     return r
 
 
@@ -350,11 +357,14 @@ def _mirror(el0, ep0, rate0, bc, removed0, t_add, t_gone, snap_t, snap_full, idx
             span = np.flatnonzero((ts < t) & (t1 > t))
             keep_el[span[np.isin(obj[span], cand)]] = 0
             new = full[idx[cand]].astype(np.float32).astype(float)
-            h = t + period
-            gap = np.linalg.norm(_rv(new, h - t) - _rv(el[cand], h - ep[cand]), axis=1) / 1e3
-            send = cand[gap > SNAP_TOL_KM]
-            el[send], ep[send] = new[gap > SNAP_TOL_KM], t
-            rate[send] = _drag_rates(el[send], bc[send], t + t0_s)
+            new_rate = _drag_rates(new, bc[cand], t + t0_s)  # the sim's drift until its next step
+            gap = np.zeros(len(cand))
+            for h in t + period * np.arange(1, _GAP_SAMPLES + 1) / _GAP_SAMPLES:  # worst over the step
+                d = _rv(new, h - t, new_rate[:, 0]) - _rv(el[cand], h - ep[cand], rate[cand, 0])
+                gap = np.maximum(gap, np.linalg.norm(d, axis=1) / 1e3)
+            bad = gap > SNAP_TOL_KM
+            send = cand[bad]
+            el[send], ep[send], rate[send] = new[bad], t, new_rate[bad]
             n_out.append(len(send))
             idx_out.append(send.astype(np.int32))
             el_out.append(el[send].astype(np.float32))
@@ -366,7 +376,7 @@ def _mirror(el0, ep0, rate0, bc, removed0, t_add, t_gone, snap_t, snap_full, idx
             removed[o] |= rem[k]
         else:
             o = obj[k]
-            r_view = _rv(el[o][None, :], tm[k] - ep[o])[0]
+            r_view = _rv(el[o][None, :], tm[k] - ep[o], rate[o, :1])[0]
             r_sim = _rv(after[k][None, :], 0.0)[0]
             miss[k] = np.linalg.norm(r_view - r_sim) / 1e3
     sparse = {"n": np.array(n_out, np.int32),

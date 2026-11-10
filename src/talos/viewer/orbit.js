@@ -1,6 +1,7 @@
 // Mean-element propagation for the TALOS playback viewer: a port of
-// talos.propagator.j2_secular_rates + talos.elements.elements_to_rv (J2 secular,
-// no drag). Positions are in the sim's inertial frame (mean equator, ~J2000), metres.
+// talos.propagator.propagate + talos.elements.elements_to_rv (J2 secular angles at the
+// epoch elements; drag lowers a linearly at the object's da/dt, as the sim does between
+// its daily decay steps). Positions are in the sim's inertial frame (mean equator, ~J2000), metres.
 // Works in the browser (window.TalosOrbit) and in Node (module.exports) for tests.
 (function (root) {
   "use strict";
@@ -33,10 +34,11 @@
   }
 
   // Inertial position of element set k at time t (seconds, same clock as ep[k]).
-  // el: {a, e, i, raan, argp, M, ep} typed arrays; rates: Float64Array(3n) from j2Rates.
-  function positionAt(el, rates, k, t, out, o) {
+  // el: {a, e, i, raan, argp, M, ep} typed arrays; rates: Float64Array(3n) from j2Rates;
+  // adot (optional): da/dt [m/s] per element set.
+  function positionAt(el, rates, k, t, out, o, adot) {
     const dt = t - el.ep[k];
-    const a = el.a[k], e = el.e[k], inc = el.i[k];
+    const a = adot ? Math.max(el.a[k] + adot[k] * dt, RE) : el.a[k], e = el.e[k], inc = el.i[k];
     const raan = el.raan[k] + rates[3 * k] * dt;
     const argp = el.argp[k] + rates[3 * k + 1] * dt;
     const M = el.M[k] + rates[3 * k + 2] * dt;
@@ -52,9 +54,9 @@
   }
 
   // n points around the orbit of element set k, frozen at time t (for drawing the ellipse).
-  function orbitRing(el, rates, k, t, n, out) {
+  function orbitRing(el, rates, k, t, n, out, adot) {
     const dt = t - el.ep[k];
-    const a = el.a[k], e = el.e[k], inc = el.i[k];
+    const a = adot ? Math.max(el.a[k] + adot[k] * dt, RE) : el.a[k], e = el.e[k], inc = el.i[k];
     const raan = el.raan[k] + rates[3 * k] * dt;
     const argp = el.argp[k] + rates[3 * k + 1] * dt;
     const cO = Math.cos(raan), sO = Math.sin(raan);

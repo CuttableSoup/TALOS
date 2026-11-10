@@ -705,24 +705,34 @@ frame, target orbits, colour untouched debris by μ, thin the untouched debris.
   mirrors the viewer exactly (Node test), sends a correction only where that ends > 0.5 km
   from the sim (`SNAP_TOL_KM`). Without the local step every object needs a daily update
   (untouched objects drift a median 3 km after one day, ~150 km after ten). 30-day design
-  run as one page: 167k corrections (vs 1.93M), 23 MB, built in 19 s; drawn target vs sim
-  median 49 m, p95 0.38 km, max 3.2 km over 51k bursts. Pages grow ~0.75 MB per sim day,
+  run as one page: 167k corrections (vs 1.93M), 23 MB; drawn target vs sim median 8 m,
+  p95 0.27 km, max 0.52 km over 51k bursts (the correction threshold; before the
+  between-steps drift was mirrored: median 49 m, max 3.2 km). Pages grow ~0.75 MB per sim day,
   so keep windows to a few months. Event logs from before
   2026-11-09 lack the post-burst elements and are rejected; runs with ablation
   fragmentation are not supported (fragments come from the engagement generator).
-- Browser propagation (`src/talos/viewer/orbit.js`) is the J2 mean-element model of
-  `talos.propagator` without drag; tests/test_render.py checks it against Python under Node
-  (< 1 mm). The exporter reports the gap between the drawn target and the sim's at
-  mid-burst (design: day 0 median 20 m, max 0.84 km; day 1 median 20 m, max 2 km; the
-  residual is drag within a day, not drawn). Without the replay a day-1 window was off by
+- Browser propagation (`src/talos/viewer/orbit.js`) is `talos.propagator.propagate`: J2
+  angles at the epoch elements, a drifting linearly at the object's da/dt (the page carries
+  the sim's rates: at t0, with each correction and each burst). tests/test_render.py checks
+  it against Python under Node (< 1 mm). Objects keep the sim's own element epoch (float64),
+  so windows may start between steps. The exporter reports the gap between the drawn
+  target and the sim's at mid-burst; corrections are tested at 6 times across each step,
+  since radial errors swing once per orbit. Without the replay a day-1 window was off by
   up to 106 km.
 - Cesium 1.119.0 from jsDelivr (needs internet). The globe's workers do not run from a
   `file://` page: use `--serve`, or `python -m http.server 8765 -d <folder>`; the page says so.
 - Headless Chrome (SwiftShader, no GPU) with the globe: ~10.5 fps with all 70k points; a
   real GPU should be well above that. The untouched-debris thinning option is there if a
   machine struggles.
-- Not drawn: drag within a day (between decay steps); the sim's own propagation also
-  holds the phase fixed between steps.
+- Between decay steps neither the sim nor the viewer advances the phase for the falling
+  a (angles use the epoch mean motion); the next step's re-epoch absorbs it.
+- Between-steps drift (2026-11-10): the sim's positions between daily steps (screening,
+  scheduling, burst geometry) lowered a at a circular-orbit rate at the mean altitude,
+  ~3 % (median) to 20 % (p99) slower than the orbit-averaged rate the daily step
+  integrates. They now use the same `lifetime.decay_rates` rate, cached per object
+  (`DebrisPopulation.drag_adot`, refreshed when elements change). Effect on the 30-day
+  design run: 1,755 removals vs 1,760, Δv/burst 11.33 vs 11.30 m/s, no slowdown. Event logs
+  from before this change render with up to ~3 km target error.
 
 ## Next step
 Multi-year run of `config/design.toml` with the corrected η₁ basis (overnight) after a source-rate check (where the removal rate settles); Latin-hypercube bands on the design including fragmentation 0–1 %, Cm ÷3 to ×2, thermal coupling; thermal coupling at 355 nm / 100 ps (melt bound); absolute pointing budget; detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.

@@ -91,27 +91,30 @@ def density(alt_m, t_s=0.0) -> np.ndarray:
     return _ATMOSPHERE.density(alt_m, t_s)
 
 
-def drag_da_dt(a, ballistic_coeff, t_s=0.0) -> np.ndarray:
-    """Near-circular orbit-averaged decay rate da/dt [m/s] at time ``t_s``.
+def drag_da_dt(a, ballistic_coeff, t_s=0.0, e=0.0) -> np.ndarray:
+    """Orbit-averaged decay rate da/dt [m/s] at time ``t_s``: the same rate the daily
+    dynamics step integrates (talos.lifetime.decay_rates), so positions between steps
+    drift the way the step will. ``ballistic_coeff`` is Cd*A/m [m^2/kg]."""
+    from .lifetime import decay_rates
 
-    ``ballistic_coeff`` is Cd*A/m [m^2/kg] (= Cd / areal density).
-    """
     a = np.asarray(a, dtype=float)
-    rho = density(a - R_EARTH, t_s)
-    return -rho * np.asarray(ballistic_coeff) * np.sqrt(MU_EARTH * a)
+    return decay_rates(a, e, ballistic_coeff, t_s=t_s)[0]
 
 
-def propagate(el: KeplerElements, dt, ballistic_coeff=None, t_epoch=0.0) -> KeplerElements:
+def propagate(el: KeplerElements, dt, ballistic_coeff=None, t_epoch=0.0, adot=None) -> KeplerElements:
     """Advance mean elements by ``dt`` seconds (broadcast against element shape).
 
-    J2 rates are evaluated at the initial elements. Drag, if given, decrements
-    ``a`` to first order only, with density at the element epoch ``t_epoch``.
+    J2 rates are evaluated at the initial elements. Drag decrements ``a`` linearly
+    (angles unchanged) at ``adot`` [m/s] if given, else, with ``ballistic_coeff``,
+    at the orbit-averaged rate at the element epoch ``t_epoch`` (drag_da_dt).
     """
     dt = np.asarray(dt, dtype=float)
     raan_dot, argp_dot, M_dot = j2_secular_rates(el)
     a = el.a
-    if ballistic_coeff is not None:
-        a = np.maximum(a + drag_da_dt(el.a, ballistic_coeff, t_epoch) * dt, R_EARTH)
+    if adot is None and ballistic_coeff is not None:
+        adot = drag_da_dt(el.a, ballistic_coeff, t_epoch, el.e)
+    if adot is not None:
+        a = np.maximum(a + np.asarray(adot, float) * dt, R_EARTH)
     return KeplerElements(
         a=a,
         e=el.e,
@@ -125,7 +128,8 @@ def propagate(el: KeplerElements, dt, ballistic_coeff=None, t_epoch=0.0) -> Kepl
 _KERNEL_MIN_SIZE = 20_000  # T*N above which the numba kernel beats numpy
 
 
-def states_at(el: KeplerElements, t, ballistic_coeff=None, use_kernel: bool | None = None, epoch=None):
+def states_at(el: KeplerElements, t, ballistic_coeff=None, use_kernel: bool | None = None, epoch=None,
+              adot=None):
     """ECI states at sim times ``t`` [s], shape ``(len(t),) + el.shape + (3,)``.
 
     ``epoch`` (scalar or el.shape) is the sim time the elements refer to (default 0).
@@ -137,7 +141,7 @@ def states_at(el: KeplerElements, t, ballistic_coeff=None, use_kernel: bool | No
     if use_kernel is None:
         use_kernel = _kernels.HAVE_NUMBA and len(el.shape) == 1 and t.size * el.shape[0] >= _KERNEL_MIN_SIZE
     if use_kernel:
-        return _kernels.states_kernel(t, *_kernels.element_args(el, ballistic_coeff, epoch))
+        return _kernels.states_kernel(t, *_kernels.element_args(el, ballistic_coeff, epoch, adot))
     t = t.reshape((-1,) + (1,) * len(el.shape))
     ep = 0.0 if epoch is None else np.asarray(epoch, float)
-    return elements_to_rv(propagate(el, t - ep, ballistic_coeff, ep))
+    return elements_to_rv(propagate(el, t - ep, ballistic_coeff, ep, adot))

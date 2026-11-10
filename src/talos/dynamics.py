@@ -111,6 +111,7 @@ class PopulationDynamics:
             for k in ("a", "e", "i", "raan", "argp", "M"):
                 getattr(pop.elements, k)[live] = getattr(el, k)
             pop.epoch_s[live] = t
+            pop.invalidate_drag(live)
             low = np.flatnonzero(el.rp - R_EARTH < 400e3)  # lifetime check only where it can matter
             if len(low):
                 rem = is_removed(el[low], pop.ballistic_coeff[live[low]], t)

@@ -81,7 +81,7 @@ def burst_states(platform: Platform, population: DebrisPopulation, j: int, tp: n
     """Sat position, debris position & velocity at pulse times ``tp`` for object ``j``."""
     r_s, _ = states_at(platform.orbit, tp)
     el = population.elements[j]
-    r_d, v_d = states_at(el, tp, population.ballistic_coeff[j], epoch=population.epoch_s[j])
+    r_d, v_d = states_at(el, tp, epoch=population.epoch_s[j], adot=population.drag_adot(j))
     return r_s, r_d, v_d
 
 
@@ -140,12 +140,12 @@ def evaluate_candidates(
         from .propagator import propagate
 
         dr, dv = state_error(js)
-        r_d, v_d = states_at(sub, tp, population.ballistic_coeff[js], epoch=population.epoch_s[js])
+        r_d, v_d = states_at(sub, tp, epoch=population.epoch_s[js], adot=population.drag_adot(js))
         r_d = r_d + dr[None] + dv[None] * (tp - t0)[:, None, None]
         v_d = v_d + dv[None]
         pred = _pb(r_s, r_d, v_d, active, las, mu_l, params)
         ep = population.epoch_s[js]
-        r0, v0 = elements_to_rv(propagate(sub, t0 - ep, population.ballistic_coeff[js], ep))
+        r0, v0 = elements_to_rv(propagate(sub, t0 - ep, adot=population.drag_adot(js)))
         est = rv_to_elements(r0 + dr, v0 + dv)
         need = dv_to_remove(est.a, est.e)
     elif elem_args is not None and params.cm_model in ("plasma", "constant"):
@@ -163,7 +163,7 @@ def evaluate_candidates(
             mu_l, *elem_args)
         pred = BurstPrediction(dvv, retro, nf, nf * las.pulse_energy_j)
     else:
-        r_d, v_d = states_at(sub, tp, population.ballistic_coeff[js], epoch=population.epoch_s[js])
+        r_d, v_d = states_at(sub, tp, epoch=population.epoch_s[js], adot=population.drag_adot(js))
         pred = predict_bursts(r_s, r_d, v_d, active, las, mu_l, params)
     if pulse_stride > 1:
         m = int(pulse_stride)
