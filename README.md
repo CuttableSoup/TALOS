@@ -503,6 +503,54 @@ life). Compare rows; don't quote the absolute dollars.
   tail is used up, so the 5-yr removal total and the $/removal are optimistic.
   The next step is a multi-year run of this design (checkpoint + resume).
 
+## Orbit knowledge, target response and risk-weighted benefit (2026-11)
+New models, all off by default (baseline events unchanged):
+`[knowledge]` (talos.knowledge: scheduler state-estimate error, per-burst
+pointing bias), `[ablation]` `cm_scale_*` by ORDEM material class,
+`attitude_model`, `fragment_*` (fragmentation by ablation), and talos.risk
+(expected collisions with active satellites from shell residence; the
+600–1000 km band is a shell; ablation fragments' natural-path risk counts
+against the laser). 14 days, ORDEM + SBM baseline (`python
+scripts/compare_response.py 14` → runs/compare_response, _frag):
+| variant | eng/hr/sat | Δv/eng | removed | fragments | net change/yr | active collisions avoided (14 d) |
+|---|---|---|---|---|---|---|
+| base | 9.97 | 5.92 | 90 | — | −2.3k | 0.138 |
+| state error 1 km / 1 m/s (angles-only class) | 9.98 | 5.86 | 86 | — | −2.2k | 0.120 |
+| state error 10 km / 10 m/s | 9.96 | 5.85 | 92 | — | −2.4k | 0.125 |
+| pointing bias 0.3 µrad / axis | 9.79 | 3.30 | 26 | — | −0.7k | 0.090 |
+| pointing bias 1 µrad / axis | 3.82 | 1.48 | 1 | — | −0.03k | 0.018 |
+| NaK immune (Cm 0) | 9.95 | 5.76 | 82 | — | −2.1k | 0.122 |
+| Cm by material: LD 1.5, MD 0.7, HD 0.4 | 9.96 | 4.28 | 37 | — | −1.0k | 0.134 |
+| attitude per burst (slow tumble) | 8.77 | 7.31 | 129 | — | −3.4k | 0.139 |
+| fragmentation 1 % per burst | 9.96 | 5.79 | 85 | 99 | +0.4k | 0.035 |
+| fragmentation 10 % per burst | 9.96 | 6.31 | 131 | 933 | +20.9k | −0.793 |
+- Orbit knowledge does not limit the greedy strategy: even 10 km / 10 m/s state
+  errors leave engagements and removals within noise (each pass re-detects and
+  re-tracks its target; the burst itself is closed-loop). An earlier note here
+  suggested the 13-visit removal strategy might need a catalogue; it does not,
+  for this scheduler (the commitment planner would).
+- Pointing is critical: the spot is ~12 cm at 200 km, so a 0.3 µrad bias
+  (9 cm at 300 km) on top of the 0.3 µrad jitter cuts removals 71 %, and 1 µrad
+  stops the system. Sub-0.3 µrad absolute pointing (centroiding, point-ahead,
+  boresight alignment) is a hard requirement.
+- Removals are nonlinear in Cm: 30 % less coupling on the dominant aluminium
+  class removes 59 % fewer objects (the light tail just clears the 30-day
+  criterion). NaK immunity costs little (−9 %): the dense droplets were rarely
+  removed anyway.
+- Slow tumble (per-burst attitude) adds +43 % removals but 12 % of bursts push
+  the wrong way (not "useful"): sideways kicks add up within a burst, so the
+  variance per burst is much larger and luck finishes objects sooner.
+- Fragmentation decides the sign: at 1 % per burst the fragments (~1 per
+  removal) already take 75 % of the collision benefit and the population grows
+  (+0.4k/yr); at 10 % the laser is a net debris source (+21k objects/yr) and
+  raises collision risk. Fragmentation probability per burst needs a sourced
+  bound below ~1 %.
+- Collisions avoided barely follow removals (the "materials" case removes 59 %
+  fewer but avoids nearly as many collisions): most of the benefit is lowering
+  long-lived band objects, not finishing them, and lasered objects cross the
+  Starlink shell faster. Starlink-shell residence dominates the natural risk of
+  engaged objects (3.8 of 5.3 expected collisions over their lifetimes).
+
 ## Gate 4 vs ORDEM: encounter flux along the platform orbit (2026-11)
 The rate at which objects enter a sphere of radius R around the platform is
 flux × πR² (any direction distribution, density uniform on the scale of R), so
@@ -557,4 +605,4 @@ runs/das_lifetime; `tests/test_das.py` skips without DAS.
   close most of it (DAS's `solarflux.bin` format is undocumented).
 
 ## Next step
-Year-2 run / source-rate check (where the removal rate settles); detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.
+Year-2 run / source-rate check (where the removal rate settles); sourced Cm by material and fragmentation probability; absolute pointing budget; detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.

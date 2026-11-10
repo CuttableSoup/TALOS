@@ -75,6 +75,8 @@ class SimResult:
     shell_names: tuple[str, ...] = ()
     shell_res_initial_s: np.ndarray | None = field(default=None, repr=False)  # (n_hit, k)
     shell_res_final_s: np.ndarray | None = field(default=None, repr=False)
+    # summed natural-path shell residence [s] of every fragment shed by ablation (new risk)
+    shell_res_fragments_s: np.ndarray | None = field(default=None, repr=False)
 
     def records(self) -> list[dict]:
         return [asdict(e) for e in self.events]
@@ -100,6 +102,8 @@ class SimResult:
             aft = float(self.shell_res_final_s[:, k].sum()) / YEAR
             risk |= {f"risk_{name}_obj_yr_natural": nat, f"risk_{name}_obj_yr_after": aft,
                      f"risk_{name}_delta_obj_yr_per_yr": (aft - nat) * YEAR / self.duration_s}
+            if self.shell_res_fragments_s is not None:
+                risk[f"risk_{name}_obj_yr_fragments"] = float(self.shell_res_fragments_s[k]) / YEAR
         duty = float(np.mean(list(self.fire_time_s.values()))) / self.duration_s
         return {
             "sim_hours": hours,
@@ -197,6 +201,7 @@ def run_engagements(
     pop0 = copy.deepcopy(pop)  # initial state of every object (incl. ones added later)
     pending: list[DebrisPopulation] = []  # ablation fragments, added at the next chunk start
     frag_stats = {"ablation_fragmentations": 0, "ablation_fragments": 0}
+    frag_idx: list[int] = []  # population indices of ablation fragments
     removed = np.zeros(len(pop), dtype=bool)
     decayed = np.zeros(len(pop), dtype=bool)
     touched = np.zeros(len(pop), dtype=bool)  # engaged at least once
@@ -228,6 +233,7 @@ def run_engagements(
         n_initial, ready_at, fire_time, events = r["n_initial"], r["ready_at"], r["fire_time"], r["events"]
         res_sim, res_t, c_start = r["res_sim"], r["res_t"], r["c0"]
         pending, frag_stats = r.get("pending", []), r.get("frag_stats", frag_stats)
+        frag_idx = list(r.get("frag_idx", []))
         if knowledge is not None and r.get("knowledge") is not None:
             knowledge.__dict__.update(r["knowledge"])
         for p in platforms:  # resource states; the illumination timeline is rebuilt for this duration
@@ -263,7 +269,7 @@ def run_engagements(
                                                        "stats": dict(dynamics.stats),
                                                        "rng": dynamics.rng.bit_generator.state},
             "planner": None if planner is None else {k: v for k, v in planner.__dict__.items() if k != "env"},
-            "pending": pending, "frag_stats": frag_stats,
+            "pending": pending, "frag_stats": frag_stats, "frag_idx": frag_idx,
             "knowledge": None if knowledge is None else dict(knowledge.__dict__),
             "meta": checkpoint_meta or {},
         }
@@ -271,6 +277,20 @@ def run_engagements(
         with open(tmp, "wb") as fh:
             pickle.dump(blob, fh, protocol=pickle.HIGHEST_PROTOCOL)
         os.replace(tmp, checkpoint_path)
+
+    def flush_pending() -> None:
+        """Append queued ablation fragments to the population."""
+        nonlocal pop, pop0, pending, removed, decayed, touched
+        n_old = len(pop)
+        for f in pending:
+            pop = pop.append(f)
+        pending = []
+        new = np.arange(n_old, len(pop))
+        pop.cm_scale[new] = params.cm_scale_for(pop.material[new])
+        grow = np.zeros(len(new), dtype=bool)
+        removed, decayed, touched = (np.concatenate([x, grow]) for x in (removed, decayed, touched))
+        pop0 = pop0.append(pop.subset(new))
+        frag_idx.extend(new.tolist())
 
     def accrue(t_now: float) -> None:
         """Shell residence of live objects over [res_t, t_now], elements held at their current values."""
@@ -306,15 +326,7 @@ def run_engagements(
                 pop.cm_scale[new] = params.cm_scale_for(pop.material[new])
                 pop0 = pop0.append(pop.subset(new))
         if pending:  # fragments shed by ablation during the previous chunk
-            n_old = len(pop)
-            for f in pending:
-                pop = pop.append(f)
-            pending = []
-            new = np.arange(n_old, len(pop))
-            pop.cm_scale[new] = params.cm_scale_for(pop.material[new])
-            grow = np.zeros(len(new), dtype=bool)
-            removed, decayed, touched = (np.concatenate([x, grow]) for x in (removed, decayed, touched))
-            pop0 = pop0.append(pop.subset(new))
+            flush_pending()
         if knowledge is not None:
             knowledge.new_chunk(float(c0))
         if planner is not None:
@@ -411,6 +423,16 @@ def run_engagements(
             on_chunk(float(min(c0 + chunk_s, duration_s)), events, removed, decayed)
 
     accrue(float(duration_s))
+    if pending:  # fragments from the last chunk
+        flush_pending()
+    res_frag = None
+    if shells is not None and params.fragment_prob_per_burst > 0:
+        res_frag = np.zeros(len(names))
+        if frag_idx:
+            fi = np.array(frag_idx)
+            ef = pop0.elements[fi]
+            _, rf = orbital_lifetime(ef.a, ef.e, pop0.ballistic_coeff[fi], t0_s=pop0.epoch_s[fi], shells_m=shells)
+            res_frag = rf.sum(axis=0)
     max_duty = float(np.mean([s.steady_state_max_duty() for s in state.values()]))
     hit = np.array(sorted({e.debris_index for e in events}), dtype=int)
     li, lf = {}, {}
@@ -465,7 +487,7 @@ def run_engagements(
         }
     return SimResult(events, duration_s, [p.name for p in platforms], fire_time, removed, max_duty, pop, li, lf,
                      dict(planner.stats, committed_now=len(planner.committed)) if planner is not None else {},
-                     env_stats, pop_stats, names, res_i, res_f)
+                     env_stats, pop_stats, names, res_i, res_f, res_frag)
 
 
 def load_checkpoint(path) -> dict:

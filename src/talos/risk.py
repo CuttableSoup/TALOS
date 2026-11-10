@@ -10,6 +10,9 @@ lasered path (shell residence from the lifetime integrator, to re-entry or the
 engaged object: a removal counts by the risk it carries, and lowering an object
 through a busy shell counts against the laser.
 
+Fragments shed by ablation (``ablation.fragment_prob_per_burst``) add their whole natural
+path's collisions against the laser.
+
 Active populations and cross-sections are PICKS ([risk] in the scenario).
 """
 
@@ -36,7 +39,7 @@ def evaluate(sc, summary: dict) -> dict:
     if not sc.risk.enabled:
         return {}
     rates = shell_rates_per_yr(sc.risk)
-    nat = aft = 0.0
+    nat = aft = frag = 0.0
     out = {}
     for name, k in rates.items():
         n = summary.get(f"risk_{name}_obj_yr_natural")
@@ -47,8 +50,13 @@ def evaluate(sc, summary: dict) -> dict:
         out[f"risk_{name}_collisions_after"] = k * a
         nat += k * n
         aft += k * a
+        fr = summary.get(f"risk_{name}_obj_yr_fragments")
+        if fr is not None:
+            out[f"risk_{name}_collisions_fragments"] = k * fr
+            frag += k * fr
     yr = summary.get("sim_hours", 0.0) * 3600.0 / YEAR
     out["active_collisions_natural"] = nat
-    out["active_collisions_avoided"] = nat - aft
-    out["active_collisions_avoided_per_yr"] = (nat - aft) / yr if yr > 0 else np.nan
+    out["active_collisions_added_by_fragments"] = frag
+    out["active_collisions_avoided"] = nat - aft - frag
+    out["active_collisions_avoided_per_yr"] = (nat - aft - frag) / yr if yr > 0 else np.nan
     return out
