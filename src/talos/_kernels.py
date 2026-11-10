@@ -126,7 +126,7 @@ if HAVE_NUMBA:
     def fine_mask_kernel(t, r_sat, v_sat, rmin, rmax, clear_r, cos_for, slew_max,
                          sun, use_sun, need_lit, cos_excl,
                          use_det, det_range, det_lim, trk_lim, bg_pen, acq_steps, radius, albedo, vsat, vdeb,
-                         sel, a0, adot, e, inc, raan0, raan_dot, argp0, argp_dot, M0, M_dot):
+                         want_mask, min_steps, sel, a0, adot, e, inc, raan0, raan_dot, argp0, argp_dot, M0, M_dot):
         """(T, n) engagement mask: range, Earth-limb LOS, field of regard, slew rate and,
         with ``use_sun``, target sunlit (cylindrical shadow) + sun-exclusion cone.
         With ``use_det`` (requires use_sun) a per-object detection/track state machine
@@ -139,10 +139,19 @@ if HAVE_NUMBA:
         steps that cannot be back within range yet are skipped: exact, since every skipped
         step would also be 'far' (mask False, track reset)."""
         T, N = t.shape[0], sel.shape[0]
-        mask = np.zeros((T, N), dtype=np.bool_)
+        # Windows are recorded per object as they are found: up to RUNS per object per call
+        # (runs shorter than min_steps dropped); cnt > RUNS flags an overflow (caller falls back
+        # to the mask). The (T, N) mask is only filled with ``want_mask``.
+        RUNS = 64
+        mask = np.zeros((T, N) if want_mask else (1, 1), dtype=np.bool_)
+        cnt = np.zeros(N, np.int64)
+        r0 = np.empty((N, RUNS), np.int64)
+        r1 = np.empty((N, RUNS), np.int64)
         for jj in nb.prange(N):
             j = sel[jj]
             vmax = vsat + vdeb[j]
+            last_true = -2
+            start = 0
             tracked = False
             run = 0
             nxt = 0
@@ -211,8 +220,22 @@ if HAVE_NUMBA:
                 cz = dx * wy - dy * wx
                 if math.sqrt(cx * cx + cy * cy + cz * cz) / d2 > slew_max:
                     continue
-                mask[k, jj] = True
-        return mask
+                if want_mask:
+                    mask[k, jj] = True
+                if last_true != k - 1:  # a new run starts: close the previous one
+                    if last_true >= 0 and last_true + 1 - start >= min_steps:
+                        if cnt[jj] < RUNS:
+                            r0[jj, cnt[jj]] = start
+                            r1[jj, cnt[jj]] = last_true + 1
+                        cnt[jj] += 1
+                    start = k
+                last_true = k
+            if last_true >= 0 and last_true + 1 - start >= min_steps:
+                if cnt[jj] < RUNS:
+                    r0[jj, cnt[jj]] = start
+                    r1[jj, cnt[jj]] = last_true + 1
+                cnt[jj] += 1
+        return mask, cnt, r0, r1
 
 
 if HAVE_NUMBA:

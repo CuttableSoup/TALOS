@@ -355,7 +355,7 @@ def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_
         r_s, v_s = states_at(platform.orbit, t)
     half = atp.field_of_regard_half_angle_rad
     cos_for = -1.0 if half >= np.pi else float(np.cos(half))
-    mask = _kernels.fine_mask_kernel(
+    kargs = (
         np.asarray(t, float), np.ascontiguousarray(r_s), np.ascontiguousarray(v_s),
         atp.engage_range_min_m, rmax, R_EARTH + atp.earth_clearance_alt_m, cos_for,
         atp.slew_rate_limit_rad_s,
@@ -364,11 +364,19 @@ def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_
         bool(sun_hat is not None and atp.detection_model == "passive_optical"), float(atp.detection_range_m),
         float(atp.detect_mag_limit), float(atp.track_mag_limit), float(atp.earth_background_penalty_mag),
         max(1, int(np.ceil(atp.acquisition_s / (t[1] - t[0]) - 1e-9))),
-        radius, albedo, vsat, vdeb, sel,
-        *args,
+        radius, albedo, vsat, vdeb,
     )
     orig = sel if base is None else base[sel]
-    return [Window(int(orig[w.debris_index]), w.start, w.stop) for w in find_windows(mask, min_steps)]
+    _, cnt, r0, r1 = _kernels.fine_mask_kernel(*kargs, False, int(min_steps), sel, *args)
+    if cnt.max(initial=0) > r0.shape[1]:  # more runs than the kernel stores: use the mask
+        mask = _kernels.fine_mask_kernel(*kargs, True, int(min_steps), sel, *args)[0]
+        return [Window(int(orig[w.debris_index]), w.start, w.stop) for w in find_windows(mask, min_steps)]
+    has = np.flatnonzero(cnt)
+    out = []
+    for jj, c in zip(has.tolist(), cnt[has].tolist()):
+        d = int(orig[jj])
+        out += [Window(d, s, e) for s, e in zip(r0[jj, :c].tolist(), r1[jj, :c].tolist())]
+    return out
 
 
 def screen(
