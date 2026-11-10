@@ -1,0 +1,22 @@
+# TALOS design baseline: the cheapest-per-removal point from the burst x storage x
+# radiator sweep (README "Burst length x energy storage x cost per removal", variant
+# r60_sc2_b20): 60 m2 radiator, 2 kWh supercapacitor buffer, 20 s bursts.
+#
+# Inherits every value from baseline.toml; only the differences are listed here.
+# Use this scenario for long-horizon and uncertainty runs:
+#   python scripts/run_baseline.py DAYS --config config/design.toml --out runs/x
+
+base = "baseline.toml"
+
+[run]
+name = "design"
+
+[resources]
+radiator_area_m2 = 60.0        # [pick] ~3x removals of 20 m2; +400 kg radiator
+burst_s = 20.0                 # [pick] best of 10 / 20 / 25 / 32 / 48 s with the 25 kg store
+battery_capacity_kwh = 2.0     # [pick] supercapacitor bank (~500 kg at 4 Wh/kg)
+# supercapacitor storage (talos.platform.STORAGE_PRESETS["supercap"])
+storage_cycles_100 = 5.0e5     # [sourced] Maxwell 160 V modules, "up to 500,000 duty cycles"
+storage_cycle_exponent = 0.0   # [pick] cycle life ~independent of DoD (VR -> VR/2 rating)
+storage_specific_energy_wh_kg = 4.0  # [sourced] module 3.8-5.4 Wh/kg; space packaging not included
+battery_rt_eff = 0.95          # [pick] supercap round trip (ESR losses -> heat)

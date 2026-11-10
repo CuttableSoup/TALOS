@@ -93,7 +93,8 @@ def test_stochastic_burst_bounded_and_reproducible():
     a = integrate_burst(*geom, LASER, 1.0, params, jitter_rad=0.3e-6, rng=np.random.default_rng(7))
     b = integrate_burst(*geom, LASER, 1.0, params, jitter_rad=0.3e-6, rng=np.random.default_rng(7))
     assert a.dv_retrograde == b.dv_retrograde
-    upper = 330 * 1.0 * params.cm * fluence(200e3, LASER)  # eta1 <= 1, cos(angle) <= 1
+    # Beta sample <= 1, scaled by eta1_scale; cos(angle) <= 1
+    upper = 330 * params.eta1_scale * params.cm * fluence(200e3, LASER)
     assert 0 < a.dv_retrograde < upper
     assert np.linalg.norm(a.dv_vec) <= upper
 
@@ -140,8 +141,41 @@ def test_deterministic_burst_is_expectation_of_stochastic():
 
 def test_eta1_samples():
     p = AblationParams()
-    x = p.sample_eta1(np.random.default_rng(0), 20000)
+    x = p.sample_eta1(np.random.default_rng(0), 20000) / p.eta1_scale
     assert x.mean() == pytest.approx(0.3, abs=0.01)
     assert x.min() >= 0 and x.max() <= 1
     th = p.sample_off_axis(np.random.default_rng(1), 20000)
     assert np.rad2deg(np.median(th)) == pytest.approx(45.0, abs=1.0)
+
+
+def test_eta1_along_beam_is_mean_beam_component():
+    # Phipps 2012 Eq. 6: eta1 is the useful (along-beam) efficiency, so the expected
+    # along-beam dv is eta1 * Cm * phi / mu whatever the off-axis angle.
+    along = AblationParams(cm_model="constant")
+    legacy = AblationParams(cm_model="constant", eta1_basis="magnitude")
+    head_on = AblationParams(cm_model="constant", off_axis_mean_rad=0.0, off_axis_sigma_rad=0.0)
+    geom = head_on_geometry(200e3)
+    a = integrate_burst(*geom, LASER, 1.0, along).dv_retrograde
+    m = integrate_burst(*geom, LASER, 1.0, legacy).dv_retrograde
+    h = integrate_burst(*geom, LASER, 1.0, head_on).dv_retrograde
+    assert a == pytest.approx(h)
+    assert m == pytest.approx(h * np.cos(np.deg2rad(45.0)))
+    assert along.eta1_scale == pytest.approx(np.sqrt(2.0))
+    assert legacy.eta1_scale == 1.0
+
+
+def test_eta1_along_beam_stochastic_mean():
+    p = AblationParams(cm_model="constant")
+    geom = head_on_geometry(200e3, n=4000)
+    sto = integrate_burst(*geom, LASER, 1.0, p, rng=np.random.default_rng(3)).dv_retrograde
+    ref = integrate_burst(*geom, LASER, 1.0, AblationParams(cm_model="constant", off_axis_mean_rad=0.0,
+                                                           off_axis_sigma_rad=0.0)).dv_retrograde
+    # E[cos theta] for N(45, 15) deg vs cos(45): within the curvature of cos (~4 %)
+    assert sto == pytest.approx(ref, rel=0.06)
+
+
+def test_eta1_basis_rejects_unknown_and_90deg():
+    with pytest.raises(ValueError):
+        AblationParams(eta1_basis="nope").eta1_nominal
+    with pytest.raises(ValueError):
+        AblationParams(off_axis_mean_rad=np.pi / 2).eta1_nominal

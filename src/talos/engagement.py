@@ -39,6 +39,15 @@ class AblationParams:
     # Thrust deflection from beam axis ~ N(mean, sigma) clipped to [0, 90 deg], random azimuth.
     off_axis_mean_rad: float = np.deg2rad(45.0)
     off_axis_sigma_rad: float = np.deg2rad(15.0)  # PLACEHOLDER spread
+    # What eta1 measures. "along_beam" (sourced, default): eta1 is the efficiency of the
+    # *useful* impulse along the beam, with improper thrust direction, shape and tumble
+    # already folded in (Phipps et al. 2012 Eq. 6, eta_c = 0.3 "after Liedahl" for "the
+    # combined effects of improper thrust direction, target shape, target tumbling";
+    # Rogers & Lee 2025 Eq. 2-4 push along the LOS with no separate angle). The impulse
+    # magnitude is then eta1 / cos(off_axis_mean), so its mean along-beam part is eta1 and the
+    # off-axis draw only adds the sideways scatter. "magnitude" (pre-2026-11-09 runs): eta1
+    # is the impulse magnitude and the deflection removes another cos(45 deg) ~ 29 %.
+    eta1_basis: str = "along_beam"
     # Target attitude: "per_pulse" draws eta1 and the thrust direction for every pulse;
     # "per_burst" holds them for the whole burst (slow tumble: same face lit throughout).
     attitude_model: str = "per_pulse"
@@ -64,14 +73,28 @@ class AblationParams:
         return np.where(m >= 0, table[np.clip(m, 0, 4)], self.cm_scale_md)
 
     @property
+    def eta1_scale(self) -> float:
+        """Impulse magnitude per unit eta1 (see ``eta1_basis``)."""
+        if self.eta1_basis == "magnitude":
+            return 1.0
+        if self.eta1_basis == "along_beam":
+            c = float(np.cos(self.off_axis_mean_rad))
+            if c < 1e-3:
+                raise ValueError("eta1_basis 'along_beam' needs off_axis_mean below 90 deg")
+            return 1.0 / c
+        raise ValueError(f"eta1_basis {self.eta1_basis!r}: expected along_beam or magnitude")
+
+    @property
     def eta1_nominal(self) -> float:
-        return self.eta1_mean
+        """Mean impulse magnitude factor (eta1_mean x eta1_scale)."""
+        return self.eta1_mean * self.eta1_scale
 
     def sample_eta1(self, rng: np.random.Generator, n: int) -> np.ndarray:
-        m = self.eta1_mean
+        """Per-pulse impulse magnitude factors: Beta(eta1_mean, kappa) x eta1_scale."""
+        m, s = self.eta1_mean, self.eta1_scale
         if m <= 0 or m >= 1 or not np.isfinite(self.eta1_kappa):
-            return np.full(n, m)
-        return rng.beta(m * self.eta1_kappa, (1 - m) * self.eta1_kappa, size=n)
+            return np.full(n, m * s)
+        return s * rng.beta(m * self.eta1_kappa, (1 - m) * self.eta1_kappa, size=n)
 
     def sample_off_axis(self, rng: np.random.Generator, n: int) -> np.ndarray:
         return np.clip(rng.normal(self.off_axis_mean_rad, self.off_axis_sigma_rad, n), 0.0, np.pi / 2)

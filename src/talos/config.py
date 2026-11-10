@@ -191,17 +191,35 @@ def _section(cls, raw: Mapping[str, Any]) -> dict:
     return vals
 
 
-def load_scenario(path: str | Path | None = None, overrides: Mapping[str, Any] | None = None) -> Scenario:
-    """Read a scenario TOML (default: config/baseline.toml) and apply dotted overrides."""
-    path = Path(path) if path is not None else DEFAULT_CONFIG
+def _scenario_vals(path: Path, types, hints, chain: tuple) -> dict:
+    """Resolved {section: {field: value}} for one TOML. A top-level ``base = "other.toml"``
+    (relative to this file) loads that scenario first; this file's keys then replace its
+    fields one by one, so a design variant lists only what differs from its base."""
+    path = Path(path).resolve()
+    if path in chain:
+        raise ValueError(f"scenario base cycle: {' -> '.join(str(p) for p in chain + (path,))}")
     with open(path, "rb") as fh:
         raw = tomllib.load(fh)
-    types = {f.name: f.type for f in fields(Scenario)}
-    hints = typing.get_type_hints(Scenario)
+    base = raw.pop("base", None)
     unknown = set(raw) - set(types)
     if unknown:
         raise KeyError(f"unknown section(s) {sorted(unknown)} in {path}")
-    vals = {sec: _section(hints[sec], raw.get(sec, {})) for sec in types}
+    if base is None:
+        vals = {sec: {} for sec in types}
+    else:
+        vals = _scenario_vals(path.parent / base, types, hints, chain + (path,))
+    for sec in types:
+        vals[sec].update(_section(hints[sec], raw.get(sec, {})))
+    return vals
+
+
+def load_scenario(path: str | Path | None = None, overrides: Mapping[str, Any] | None = None) -> Scenario:
+    """Read a scenario TOML (default: config/baseline.toml; may name a ``base`` scenario) and
+    apply dotted overrides."""
+    path = Path(path) if path is not None else DEFAULT_CONFIG
+    types = {f.name: f.type for f in fields(Scenario)}
+    hints = typing.get_type_hints(Scenario)
+    vals = _scenario_vals(path, types, hints, ())
     for dotted, v in (overrides or {}).items():
         sec, _, key = dotted.partition(".")
         if sec not in types or not key:

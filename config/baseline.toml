@@ -113,23 +113,32 @@ t_min_c = 10.0                 # [pick] heater floor
 t_max_c = 17.0                 # [pick] stop firing above this
 
 [ablation]
-cm_n_per_mw = 50.0             # [sourced] peak coupling (sweep 25-100)
+cm_n_per_mw = 50.0             # [sourced] peak coupling (sweep 25-100). Measured: 7-40 uN s/J by material and
+                               # roughness (Keil+ 2023, 10 ns 1064 nm); Al 50-320 by surface, organics to 300
+                               # (Phipps+ 2012); rep-rated pulses "up to 3x reduced coupling" vs single-shot
+                               # data (NASA OTPS 2024). No ps / UV measurement found for any debris material.
 threshold_fluence_kj_m2 = 4.5  # [sourced]
 phi_opt_kj_m2 = 8.5            # [sourced]
 cm_model = "plasma"            # plasma | constant
 plasma_exponent = 0.25         # [sourced]
-eta1_mean = 0.3                # [sourced]
+eta1_mean = 0.3                # [sourced] Phipps+ 2012 eta_c = 0.3 "after Liedahl" (plate ~1/3 of a sphere)
+eta1_basis = "along_beam"      # [sourced] eta1 already includes improper thrust direction (Phipps Eq. 6);
+                               # "magnitude" = pre-2026-11-09 double count with cos(45 deg)
 eta1_kappa = 10.0              # [guess] spread
-off_axis_mean_deg = 45.0       # [sourced]
+off_axis_mean_deg = 45.0       # [sourced] with along_beam it sets only the sideways scatter
 off_axis_sigma_deg = 15.0      # [guess] spread
 attitude_model = "per_pulse"   # [pick] per_pulse | per_burst (slow tumble: eta1 / thrust direction fixed per burst)
-# Cm relative to nominal by ORDEM material class [pick: all 1 = no material dependence; 0 = immune]
+# Cm relative to nominal by ORDEM material class [pick: all 1 = no material dependence; 0 = immune].
+# Direction sourced, size not: CFRP ~80 uN s/J above ~2 J/cm2, several times metal, threshold ~1/4 of
+# metal (SPIE 13699, 1064/532/355 nm, ns) -> ld > md; no ps / UV data per class.
 cm_scale_nk = 1.0              # NaK droplets (liquid metal spheres): unknown
 cm_scale_ld = 1.0              # low density (< 2 g/cm3: plastics, MLI, composites)
 cm_scale_md = 1.0              # medium density (aluminium)
 cm_scale_hd = 1.0              # high density (steel, copper)
 cm_scale_in = 1.0              # intact objects
-fragment_prob_per_burst = 0.0  # [pick] probability a burst fragments the target (0 = off)
+fragment_prob_per_burst = 0.0  # [guess] probability a burst fragments the target (0 = off). No published
+                               # value: NASA OTPS 2024 and JAXA 2023 both say no systematic data exist.
+                               # See README "Sourcing pass 2" for the derived melt-per-burst bound.
 fragment_count_mean = 2.0      # [pick] fragments >= 1 cm per fragmentation (Poisson)
 fragment_dv_sigma_m_s = 5.0    # [pick] per-axis fragment dv spread
 

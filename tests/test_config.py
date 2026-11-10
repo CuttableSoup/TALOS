@@ -63,3 +63,38 @@ def test_scenario_dict_is_flat():
     d = scenario_dict(load_scenario())
     assert d["laser.burst_power_w"] == 25e3 and "sun.enabled" in d
     assert isinstance(Scenario(), Scenario)
+
+
+def test_base_scenario_inheritance(tmp_path):
+    base = tmp_path / "base.toml"
+    base.write_text('[run]\nname = "b"\n[resources]\nradiator_area_m2 = 20.0\nburst_s = 10.0\n')
+    child = tmp_path / "sub" / "child.toml"
+    child.parent.mkdir()
+    child.write_text('base = "../base.toml"\n[resources]\nradiator_area_m2 = 60.0\n')
+    sc = load_scenario(child)
+    assert sc.resources.radiator_area_m2 == 60.0  # replaced
+    assert sc.resources.burst_s == 10.0  # inherited
+    assert sc.run.name == "b"
+    # a unit-suffixed spelling in the child replaces the SI field from the base
+    child.write_text('base = "../base.toml"\n[resources]\nradiator_area_ft2 = 100.0\n')
+    assert load_scenario(child).resources.radiator_area_m2 == pytest.approx(100.0 * 0.09290304)
+
+
+def test_base_scenario_cycle(tmp_path):
+    a, b = tmp_path / "a.toml", tmp_path / "b.toml"
+    a.write_text('base = "b.toml"\n')
+    b.write_text('base = "a.toml"\n')
+    with pytest.raises(ValueError, match="cycle"):
+        load_scenario(a)
+
+
+def test_design_scenario():
+    from talos.config import DEFAULT_CONFIG
+    from talos.platform import STORAGE_PRESETS
+
+    sc = load_scenario(DEFAULT_CONFIG.parent / "design.toml")
+    base = load_scenario()
+    assert sc.resources.radiator_area_m2 == 60.0 and sc.resources.burst_s == 20.0
+    for k, v in STORAGE_PRESETS["supercap"].items():
+        assert getattr(sc.resources, k) == pytest.approx(v), k
+    assert sc.laser == base.laser and sc.ablation == base.ablation

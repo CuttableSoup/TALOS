@@ -18,7 +18,8 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 
 ## Key equations (Rogers & Lee, arXiv:2512.14682)
 - Fluence: φ = η₂(E/π)·[2D/(M²·a·λ·R)]², a≈1.27
-- Δv per pulse: Δv = η₁·Cm·φ/μ, along beam line of sight
+- Δv per pulse: Δv = η₁·Cm·φ/μ, along beam line of sight (η₁ is the useful, along-beam
+  efficiency; direction, shape and tumble are already in it — Phipps 2012 Eq. 6)
 - Fire only if φ ≥ ablation threshold (~0.85 J/cm² at 100 ps; 8.5 kJ/m² design)
 - Cm: 30 (conservative) to 100 µN·s/J; make η₁ and off-axis Δv stochastic
 - Removed = lifetime < 1 month or perigee < ~200 km
@@ -86,7 +87,11 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 - Run: `pip install -e .[dev]` (+ `numba`, `pyarrow` for speed/parquet), then `pytest`.
   Demo: `python scripts/demo_run.py N SATS HOURS MU`; scheduler comparison:
   `python scripts/compare_scores.py DAYS`. Single run with progress log:
-  `python scripts/run_baseline.py DAYS --out runs/x [--threads N] [--set section.key=value ...]`.
+  `python scripts/run_baseline.py DAYS --out runs/x [--threads N] [--config path.toml] [--set section.key=value ...]`.
+  Without `pip install -e .`, set `PYTHONPATH=src` first.
+- Scenarios: `config/baseline.toml` (reference, all earlier results) and `config/design.toml`
+  (design baseline for long runs: 60 m² radiator, 2 kWh supercap, 20 s bursts). A TOML may
+  start with `base = "other.toml"` and list only the keys that differ.
 - Engagement/removal counts are NOT weight-scaled (one target per burst);
   run at full density (N = n_real).
 
@@ -135,8 +140,8 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 | φ_opt (Cm peak) | `AblationParams.phi_opt` | 8.5 kJ/m² | **sourced** |
 | Cm model | `AblationParams.cm_model` | plasma: log ramp, then ∝ φ^-1/4 | **sourced** falloff; ramp shape is a guess |
 | Cm peak | `AblationParams.cm` | 50 N/MW (sweep 25–100) | **sourced** range; only ~100 ps Al point is ≤30 N/MW, IR not UV |
-| η₁ | `AblationParams.eta1_mean/kappa` | Beta, mean 0.3, κ=10 | mean **sourced**; spread a guess |
-| Δv off-axis angle | `AblationParams.off_axis_*` | N(45°, 15°) clipped [0, 90°] | centre **sourced**; spread a guess |
+| η₁ | `AblationParams.eta1_mean/kappa`, `eta1_basis` | Beta, mean 0.3, κ=10; `along_beam` | mean **sourced** (Phipps 2012 η_c = 0.3 after Liedahl); basis **sourced** (η_c covers improper thrust direction); spread a guess |
+| Δv off-axis angle | `AblationParams.off_axis_*` | N(45°, 15°) clipped [0, 90°] | centre **sourced**; spread a guess. With `along_beam` it sets only the sideways scatter (magnitude η₁/cos 45°) |
 | Debris count in band | `population.kind = "ordem"` | 75.9k 1–10 cm, 600–1000 km (ORDEM 3.2, 2026) | **sourced** (ORDEM); inclination mix is a fit to ORDEM flux spectra; toy: 100k (Phipps) |
 | Settle / retarget | `ATPConfig.settle_s` | 5 s, not overlapped | guess (conservative) |
 | Min burst | `ResourceConfig.min_burst_s` | 5 s | guess |
@@ -147,7 +152,8 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 | Sensible heat capacity | `heat_capacity_j_k` | 0.5 MJ/K | **guess** (0.2–1) |
 | Store temperature band | `t_min_k`, `t_max_k` | melt −5 K (heaters) … melt +2 K | guess |
 | Radiator area | `ResourceConfig.radiator_area_m2` | 20 m² | **design choice, dominant**: 20 m² → 2.9 % duty; ~60 m² for 10 % |
-| Battery | `ResourceConfig` | 2 kWh, 85 % round trip (losses → heat) | capacity guess; cycle life NOT modelled |
+| Battery / storage | `ResourceConfig`, `STORAGE_PRESETS` | 2 kWh; Li-ion 85 % RT (baseline), supercap 95 % (design) | capacity pick. Cycle life: Li-ion shape consistent with ~30k cycles at < 40 % DoD (LEO requirement); LTO ≥ 25k (vendor); supercap 500k cycles, 3.8–5.4 Wh/kg (Maxwell 160 V module datasheets) |
+| Fragmentation | `fragment_prob_per_burst` | 0 (off) | **guess**: no published probability (NASA OTPS 2024, JAXA 2023: no systematic data); see Sourcing pass 2 for a derived melt bound |
 | Bus | `bus_power_w` | 1.5 kW, dissipated into the thermal node | guess |
 | Field of regard | `ATPConfig.field_of_regard_half_angle_rad` | unrestricted | guess |
 | Epoch / LTAN | `[run] epoch`, `[constellation] ltan_hours` | 2026-12-21, 06:00 | pick: worst-case eclipse (~17 min/orbit at 800 km) |
@@ -232,8 +238,8 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 - Not modelled: M²/thermal-lens transients at burst start
   (fluence ∝ 1/M⁴), THG crystal detuning (±0.1 K), diode wavelength drift,
   heater power, radiator EOL absorptivity and self-view (−10–30 %).
-- η₁ (mean 0.3) and the 45° thrust angle may double-count: if the sourced η₁ is
-  already a beam-axis average, applying cos(45°) on top cuts Δv by another ~30%
+- ~~η₁ and the 45° thrust angle may double-count~~ resolved 2026-11-09: they did
+  (see Sourcing pass 2); `eta1_basis = "along_beam"` is now the default.
 - Gate 1 not independent (η₂ backed out of the same L'ADROIT numbers)
 - Gate 3: 63 km confirmed (Pieters & Noomen, SDC8 paper 43) but miss distance unstated
 - Gate 4 (toy population): 38/min within 250 km at 100k objects vs Phipps 19/min; ~2× gap
@@ -604,5 +610,76 @@ runs/das_lifetime; `tests/test_das.py` skips without DAS.
   disagreement. Replacing the parametric cycle with the ODPO F10.7 table would
   close most of it (DAS's `solarflux.bin` format is undocumented).
 
+## Sourcing pass 2 (2026-11-09)
+The four inputs that swing the result most, checked against sources.
+
+**η₁ and the 45° thrust angle: the old model counted direction twice.** Phipps et al.
+2012 (arXiv:1110.3835, Eq. 6) write Δv‖ = η_c·Cm·φ/μ for the *desired* velocity change,
+with η_c "for the combined effects of improper thrust direction, target shape, target
+tumbling, etc.", and "take η_c = 0.3 after Liedahl". Liedahl et al. 2010
+(arXiv:1004.0390) get that from outcomes: "the average perigee change for a plate is
+approximately 1/3 that found for a sphere". Rogers & Lee (arXiv:2512.14682, Eq. 2–4)
+push along the line of sight with no separate angle. TALOS used η₁ = 0.3 as the impulse
+magnitude and then tilted it by ~45°, costing another cos 45° ≈ 0.71. Now
+`eta1_basis = "along_beam"` (default): magnitude η₁/cos(mean angle), so the mean
+along-beam part is η₁ and the off-axis draw only adds sideways scatter. `"magnitude"`
+reproduces earlier runs. **Every result above this section used the old basis and
+understates Δv per engagement by ~29 % (×1.41 correction).**
+
+**Supercapacitor cycle life was 2× optimistic.** Maxwell 160 V modules (BMOD0006, 160V
+10F) are rated "up to 500,000 duty cycles" (V_R → V_R/2, 25 °C; end of life −20 %
+capacitance, +100 % ESR) at 3.8–5.4 Wh/kg module level. The preset had 1M cycles at
+5 Wh/kg; now 500k at 4 Wh/kg. The only space-qualified supercapacitor found is a Nesscap
+10 F cell (ESA EPPL II), with no cycle count published. At the design's ~17 bursts/hr/sat
+(~150k/yr) 500k cycles is ~3.3 yr, so storage, not the 5-yr design life, sets mission
+life again. Li-ion's preset shape (24–39k cycles at 30–40 % DoD) agrees with the ~30k-cycle
+LEO requirement met by cycling below 40 % DoD; LTO's 20k matches a vendor ≥ 25k (to 80 %,
+DoD unstated, not space-qualified).
+
+**Cm by material: direction sourced, size not.** No ps or UV measurement on a debris
+material was found. What exists is ns / IR:
+| source | regime | result |
+|---|---|---|
+| Keil et al. 2023, *Aerospace* 10, 947 | 10 ns, 1064 nm, 60 J, free fall | Cm 7–40 µN·s/J, thermal coupling 2–12.5 %, both by material, fluence, roughness |
+| Phipps et al. 2012 | survey | Al 50–320 µN·s/J by surface condition; organics up to 300 |
+| SPIE 13699 (2025) | 1064 / 532 / 355 nm, ns | CFRP threshold ~¼ of metal, Cm ~80 µN·s/J above ~2 J/cm², several times metal |
+| NASA OTPS 2024 TIM | review | rep-rated pulses "may see up to 3x reduced coupling" vs single-shot data |
+So low-density (CFRP, plastics) > aluminium ≥ high density, and the 33 Hz rep rate may cut
+all of them by up to 3×; the 25–100 N/MW sweep range covers 2× either way, not 3× down.
+The `cm_scale_*` picks stay at 1; the "materials" variant above (LD 1.5 / MD 0.7 /
+HD 0.4) has the sourced ordering.
+
+**Fragmentation probability: no published value.** NASA OTPS 2024 lists breakup as an
+open "make or break" item ("debris may be small enough for punch through or
+fragmentation"); JAXA's 2023 ISS experiment page says melt "can be deformed and/or
+fragmented by a second shot" and that no systematic studies exist. Scharring & Kästel 2023
+keep a ground laser below 10 Hz "to avoid fragment meltdown". `fragment_prob_per_burst`
+stays a guess (0). A derived bound instead: a burst melts an aluminium target if the
+absorbed heat f_th·Σφ exceeds μ·h_melt, with h_melt = c_p·ΔT + L ≈ 0.9 kJ/kg/K × 643 K +
+397 kJ/kg ≈ 976 kJ/kg and no cooling (bare Al, ε ≈ 0.1, radiates ~4.6 kW/m² two-sided at
+800 K against ~13–90 kW/m² absorbed). 33 Hz, f_th = 2–12.5 % (Keil, ns IR):
+| burst | φ per pulse | absorbed per burst | melts μ below |
+|---|---|---|---|
+| 10 s | 10 kJ/m² (325 km) | 66–410 kJ/m² | 0.07–0.42 kg/m² |
+| 20 s | 10 kJ/m² (325 km) | 130–830 kJ/m² | 0.14–0.85 kg/m² |
+| 20 s | 17 kJ/m² (250 km) | 220–1400 kJ/m² | 0.23–1.4 kg/m² |
+Re-engagements are days apart, so heat does not carry over between bursts. At the high
+end, a 20 s burst can melt the μ < 1 objects that make up 68 % of removals; at the low end
+only the lightest few percent. 20 s bursts double the exposure relative to 10 s. ps pulses
+should leave less heat than 10 ns ones, but no measurement was found. This makes
+thermal coupling at 355 nm / 100 ps the single most useful measurement to ask for; until
+then, cap absorbed energy per burst (burst length × fluence) or treat melt-prone bursts as
+fragmentation risk.
+
+**Effect, 7 days** (ORDEM + SBM, Dec 21 start, 4 sats; runs/sourcing_7d; 7-day removals
+are early on the ramp, so compare rows only; $/removal = 7-day rate × mission life):
+| run | eng/hr/sat | Δv/eng (m/s) | removed (7 d) | storage life (yr) | cost/removal |
+|---|---|---|---|---|---|
+| baseline, old basis (`magnitude`) | 9.98 | 6.05 | 30 | 0.46 | $545k |
+| baseline, `along_beam` | 9.94 | 8.51 (×1.41) | 58 (×1.9) | 0.46 | $283k |
+| `config/design.toml` (60 m², supercap 500k cycles, 20 s) | 17.16 | 14.02 | 335 | 3.15 (storage) | $12k |
+Removals respond more than Δv (×1.9 for ×1.41) because each object needs fewer visits.
+The design's mission life is now storage-limited at 3.2 yr (was 5 yr at 1M cycles).
+
 ## Next step
-Year-2 run / source-rate check (where the removal rate settles); sourced Cm by material and fragmentation probability; absolute pointing budget; detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.
+Multi-year run of `config/design.toml` with the corrected η₁ basis (overnight) after a source-rate check (where the removal rate settles); Latin-hypercube bands on the design including fragmentation 0–1 %, Cm ÷3 to ×2, thermal coupling; thermal coupling at 355 nm / 100 ps (melt bound); absolute pointing budget; detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.

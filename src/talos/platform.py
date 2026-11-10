@@ -35,13 +35,21 @@ class LaserConfig:
 
 # Energy-storage presets for ResourceConfig (PICKS, order-of-magnitude literature values):
 # cycles at 100 % DoD, DoD exponent, pack specific energy, round-trip efficiency.
+# Sourcing (2026-11-09):
+#   li_ion: N(30-40 % DoD) = 24-39k cycles, consistent with the ~30k-cycle LEO requirement
+#     met by cycling below 40 % DoD (JAXA lithium-ion capacitor study). Shape is still a pick.
+#   lto: vendor >= 25k cycles to 80 % capacity (Nichicon), DoD unstated; not space-qualified.
+#   supercap: Maxwell 160 V modules (BMOD0006 / 160V 10F) are rated "up to 500,000 duty
+#     cycles" (VR -> VR/2 at 25 C; EOL -20 % capacitance, +100 % ESR) at 3.8-5.4 Wh/kg
+#     module level; only space-qualified part found is a Nesscap 10 F cell (ESA EPPL II, no
+#     cycle count). Was 1e6 cycles / 5 Wh/kg before 2026-11-09.
 STORAGE_PRESETS = {
     "li_ion": dict(storage_cycles_100=5000.0, storage_cycle_exponent=1.7,
                    storage_specific_energy_wh_kg=120.0, battery_rt_eff=0.85),
     "lto": dict(storage_cycles_100=20000.0, storage_cycle_exponent=1.2,
                 storage_specific_energy_wh_kg=70.0, battery_rt_eff=0.90),
-    "supercap": dict(storage_cycles_100=1.0e6, storage_cycle_exponent=0.0,
-                     storage_specific_energy_wh_kg=5.0, battery_rt_eff=0.95),
+    "supercap": dict(storage_cycles_100=5.0e5, storage_cycle_exponent=0.0,
+                     storage_specific_energy_wh_kg=4.0, battery_rt_eff=0.95),
 }
 
 
