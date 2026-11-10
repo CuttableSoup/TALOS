@@ -409,6 +409,46 @@ ORDEM 2026 + SBM μ, 4 sats, 20 kW, 365 sim days (`python scripts/compare_mu_mod
 - Runs started from now on also write `logs/<name>.log`, one line per sim
   day, and `events/<name>.partial.parquet`, an event checkpoint saved every sim week.
 
+## Thermal / burst design levers, ORDEM + SBM baseline (2026-11)
+30 days, 4 sats, Dec 21 start (`python scripts/compare_thermal.py 30` →
+runs/compare_thermal, runs/compare_thermal_b; ~6 min per run, 4 in parallel).
+Removals are 30-day counts and still climbing (weekly 30/60/81/84 at baseline),
+so compare variants, don't annualise.
+| variant | eng/hr/sat | Δv/eng (m/s) | duty | removed | vs base | battery EFC/sat/yr | DoD/burst |
+|---|---|---|---|---|---|---|---|
+| base (20 m², 10 s bursts, PCM 25 kg, wall-plug 0.10) | 10.1 | 5.64 | 2.7 % | 267 | 1.00 | 26.6k | 29 % |
+| PCM 75 kg | 10.6 | 5.54 | 2.9 % | 260 | 0.97 | 27.8k | 29 % |
+| wall-plug 0.15 | 16.4 | 5.19 | 4.4 % | 423 | 1.58 | 26.2k | 18 % |
+| bursts 5 s | 20.0 | 2.68 | 2.8 % | 160 | 0.60 | 27.1k | 15 % |
+| bursts 20 s | 5.0 | 10.71 | 2.6 % | 320 | 1.20 | 25.7k | 56 % |
+| bursts 30 s | 0 | — | 0 | 0 | 0 | — | — |
+| radiator 40 m² | 20.8 | 5.06 | 5.6 % | 545 | 2.04 | 53.8k | 29 % |
+| radiator 60 m² | 31.7 | 4.54 | 8.5 % | 809 | 3.03 | 81.3k | 29 % |
+| 40 m² + PCM 75 kg | 22.2 | 4.88 | 6.0 % | 562 | 2.10 | 57.3k | 29 % |
+| 40 m² + 20 s bursts | 10.6 | 9.64 | 5.5 % | 721 | 2.70 | 52.6k | 56 % |
+| 60 m² + 20 s bursts | 16.1 | 8.86 | 8.4 % | 1091 | 4.09 | 79.8k | 55 % |
+| 20 s bursts + wall-plug 0.15 | 8.3 | 9.80 | 4.3 % | 505 | 1.89 | 25.6k | 34 % |
+- Removals scale ~linearly with radiator area under SBM μ (2.0× at 40 m²,
+  3.0× at 60 m²; the old μ = 1 toy runs grew faster than linear). Δv per
+  engagement falls as the platform fires more often (fewer targets to choose
+  from per opportunity); saturation drops to 0.87 at 60 m².
+- PCM mass does nothing: 25 kg already covers a burst, and sustained duty is
+  set by radiator rejection, not buffer size.
+- Burst length is the cheapest lever: 20 s bursts give +20 % at 20 m² and
+  +32–35 % at 40–60 m² (same duty, half the engagements, twice the Δv each:
+  fewer 5 s settles, Δv concentrated on the objects that are being finished).
+  5 s bursts lose 40 %. The ceiling is the battery: a 30 s burst needs ~7.4 MJ
+  from a 7.2 MJ (2 kWh) pack, never fits, and the platform never fires (the
+  scheduler waits for a full burst). Longer bursts mean deeper cycles (56 %
+  DoD) on a battery that already needs ~26k equivalent full cycles a year.
+- Wall-plug 0.15 vs 0.10: +58 % (less waste heat per joule of light).
+- Battery cycling scales with duty: ~27k EFC/sat/yr at 20 m², ~80k at 60 m²,
+  against ~27–65k cycles for space Li-ion over a whole life. Every variant that
+  removes more needs a battery redesign (supercapacitor / LTO buffer, bigger
+  pack) before cost per removal means anything.
+- Risk transfer (Starlink-shell object-years, lasered − natural) is ±hundreds per
+  year with no consistent sign across variants: too noisy at 30 days to rank.
+
 ## Gate 4 vs ORDEM: encounter flux along the platform orbit (2026-11)
 The rate at which objects enter a sphere of radius R around the platform is
 flux × πR² (any direction distribution, density uniform on the scale of R), so
