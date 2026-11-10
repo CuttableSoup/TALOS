@@ -426,6 +426,151 @@ if HAVE_NUMBA:
         return dv, retro, nf
 
 
+if HAVE_NUMBA:
+    # --- resource state machine (resources.ResourceState), same operation order ---
+    # K: float64 constants, see resources.ResourceState._kernel_consts for the layout.
+    _SIGMA = 5.670374419e-8
+    _H_STEP = 5.0
+    _PROBE_S = 10.0
+
+    @nb.njit(cache=True, inline="always")
+    def _r_temp(H, K):
+        if H <= K[0]:
+            return K[3] + H / K[2]
+        if H <= K[1]:
+            return K[4]
+        return K[4] + (H - K[1]) / K[2]
+
+    @nb.njit(cache=True, inline="always")
+    def _r_prad(temp, alb, K):
+        t_rad = temp - K[7]
+        per_side = K[8] * _SIGMA * t_rad ** 4.0 - K[8] * K[9] * K[10] - K[11] * alb - K[12]
+        return max(0.0, K[6] * (K[13] * K[14] * per_side))
+
+    @nb.njit(cache=True)
+    def r_evolve(H, p_in, dt, alb, goal, has_goal, K):
+        """ResourceState._evolve -> (H, elapsed, time held at the floor)."""
+        H1, H2 = K[0], K[1]
+        t = 0.0
+        if has_goal and H == goal:
+            return H, 0.0, 0.0
+        while t < dt - 1e-12:
+            rem = dt - t
+            r = p_in - _r_prad(_r_temp(H, K), alb, K)
+            if abs(r) < 1e-9:
+                return H, dt, 0.0
+            if H <= 0.0 and r < 0.0:
+                return 0.0, dt, rem
+            if H2 > H1 and ((H1 < H < H2) or (H == H1 and r > 0) or (H == H2 and r < 0)):
+                edge = H2 if r > 0 else H1
+                h = min(rem, (edge - H) / r)
+                Hn = edge if h < rem else H + r * h
+            else:
+                h = min(rem, _H_STEP)
+                Hm = max(0.0, H + 0.5 * h * r)
+                Hn = H + h * (p_in - _r_prad(_r_temp(Hm, K), alb, K))
+                if (H - H1) * (Hn - H1) < 0:
+                    h *= (H1 - H) / (Hn - H)
+                    Hn = H1
+                elif (H - H2) * (Hn - H2) < 0:
+                    h *= (H2 - H) / (Hn - H)
+                    Hn = H2
+                if Hn < 0.0:
+                    h *= H / (H - Hn)
+                    Hn = 0.0
+            if has_goal and (H - goal) * (Hn - goal) <= 0 and Hn != H:
+                return goal, t + h * (goal - H) / (Hn - H), 0.0
+            H, t = Hn, t + h
+        return H, t, 0.0
+
+    @nb.njit(cache=True, inline="always")
+    def _r_seg(t, K, has_env, lit, af, albw, step):
+        """(lit, p_charge, albedo, segment end) at time t."""
+        if not has_env:
+            return True, K[20] - K[17], 0.0, np.inf
+        n = lit.shape[0]
+        k = int(min(max(t // step, 0.0), n - 1))
+        end = np.inf if k == n - 1 else (k + 1) * step
+        return lit[k], K[20] * af[k] - K[17], albw[k], end
+
+    @nb.njit(cache=True, inline="always")
+    def _r_batt_loss(pc, K):
+        return (1.0 - K[16]) * max(K[18] - pc, 0.0)
+
+    @nb.njit(cache=True)
+    def r_advance(t, heat, soc, heater_j, brown, disch, t_new, K, has_env, lit, af, albw, step):
+        """ResourceState.advance -> (t, heat_j, soc_j, heater_j, brownout_s, discharge_j)."""
+        cap = K[15]
+        while t < t_new - 1e-12:
+            lt, pc, alb, end = _r_seg(t, K, has_env, lit, af, albw, step)
+            dt = min(t_new, end) - t
+            heat, _, t_floor = r_evolve(heat, K[17], dt, alb, 0.0, False, K)
+            heater = max(0.0, K[21] * _r_prad(K[3], alb, K) - K[17]) * t_floor
+            heater_j += heater
+            s = soc + pc * dt - heater
+            if s < 0.0:
+                rate = (heater / t_floor if t_floor > 0 else 0.0) - pc
+                brown += -s / rate if rate > 0 else dt
+                s = 0.0
+            disch += max(0.0, soc - s)
+            soc = min(cap, s)
+            t = min(t_new, end) if end < t_new else t_new
+        return t, heat, soc, heater_j, brown, disch
+
+    @nb.njit(cache=True)
+    def r_max_fire(t, heat, soc, cap, K, has_env, lit, af, albw, step, fire_in_eclipse):
+        """ResourceState.max_fire_s."""
+        h_max = K[5]
+        if heat >= h_max:
+            return 0.0
+        H, f = heat, 0.0
+        while f < cap:
+            lt, pc, alb, end = _r_seg(t, K, has_env, lit, af, albw, step)
+            if not lt and not fire_in_eclipse:
+                return f
+            dt = min(end - t, cap - f)
+            de = K[18] - pc
+            t_soc = soc / de if de > 0 else np.inf
+            p_in = K[19] + _r_batt_loss(pc, K) + K[17]
+            H, el, _ = r_evolve(H, p_in, min(dt, t_soc), alb, h_max, True, K)
+            if H >= h_max - 1e-6:
+                return f + el
+            if t_soc <= dt:
+                return f + t_soc
+            f += dt
+            t += dt
+            soc -= de * dt
+        return np.inf if not has_env else f
+
+    @nb.njit(cache=True)
+    def r_wait_for(t, heat, soc, heater_j, brown, disch, f, cap, K, has_env, lit, af, albw, step,
+                   fire_in_eclipse):
+        """ResourceState.wait_for (idle seconds until a burst of f fits; inf if not within cap)."""
+        if r_max_fire(t, heat, soc, 600.0, K, has_env, lit, af, albw, step, fire_in_eclipse) >= f - 1e-9:
+            return 0.0
+        # never fits: a fresh state (cold store, full battery, no environment)
+        if r_max_fire(0.0, 0.0, K[15], 600.0, K, False, lit, af, albw, step, fire_in_eclipse) < f - 1e-9:
+            return np.inf
+        t0 = t
+        s = (t, heat, soc, heater_j, brown, disch)
+        while s[0] - t0 < cap:
+            prev = s
+            s = r_advance(s[0], s[1], s[2], s[3], s[4], s[5], s[0] + _PROBE_S, K, has_env, lit, af, albw, step)
+            if r_max_fire(s[0], s[1], s[2], 600.0, K, has_env, lit, af, albw, step, fire_in_eclipse) >= f - 1e-9:
+                lo, hi = 0.0, _PROBE_S
+                for _ in range(10):
+                    mid = 0.5 * (lo + hi)
+                    c = r_advance(prev[0], prev[1], prev[2], prev[3], prev[4], prev[5], prev[0] + mid, K,
+                                  has_env, lit, af, albw, step)
+                    if r_max_fire(c[0], c[1], c[2], 600.0, K, has_env, lit, af, albw, step,
+                                  fire_in_eclipse) >= f - 1e-9:
+                        hi = mid
+                    else:
+                        lo = mid
+                return prev[0] + hi - t0
+        return np.inf
+
+
 def element_args(el, ballistic_coeff=None, epoch=None):
     """Flatten elements + J2/drag rates into the kernel argument tuple.
 

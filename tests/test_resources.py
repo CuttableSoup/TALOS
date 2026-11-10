@@ -113,3 +113,45 @@ def test_summary_reports_hardware_life():
     assert s["laser_shots_per_sat_per_yr"] == pytest.approx(sum(e.n_pulses for e in res.events) * yr)
     assert 0.0 < s["battery_dod_mean"] <= s["battery_dod_max"] <= 1.0
     assert s["battery_efc_per_sat_per_yr"] > 0
+
+
+@pytest.mark.parametrize("with_env", [False, True])
+def test_numba_state_machine_matches_python(monkeypatch, with_env):
+    """Same random sequence of idle / wait / fire through both paths: bit-identical state."""
+    from talos import _kernels
+    from talos.sun import Timeline
+
+    if not _kernels.HAVE_NUMBA:
+        pytest.skip("numba not installed")
+    rng = np.random.default_rng(4)
+    env = None
+    if with_env:
+        n = 4000
+        lit = (np.arange(n) % 590) < 480  # ~98-min orbit at 10 s steps with an eclipse
+        env = Timeline(10.0, lit, np.where(lit, rng.uniform(0.8, 1.0, n), 0.0), rng.uniform(0, 400, n))
+    ops = [(rng.choice(["idle", "wait", "fire"]), rng.uniform(1, 400)) for _ in range(250)]
+
+    def run():
+        s = ResourceState(ResourceConfig(radiator_area_m2=8.0), LaserConfig(), env=env, fire_in_eclipse=False)
+        log = []
+        for op, x in ops:
+            if op == "idle":
+                s.advance(s.t + x)
+            elif op == "wait":
+                w = s.wait_for(10.0)
+                log.append(w)
+                if np.isfinite(w):
+                    s.advance(s.t + w)
+            else:
+                f = min(10.0, s.max_fire_s())
+                log.append(f)
+                if f > 0.5:
+                    s.fire(f)
+            log += [s.t, s.heat_j, s.soc_j, s.heater_j, s.brownout_s, s.discharge_j]
+        return log
+
+    got = run()
+    monkeypatch.setattr(_kernels, "HAVE_NUMBA", False)
+    ref = run()
+    assert got == ref  # exact
+    assert any(v > 0 for v in got[1::7])  # the run does wait / fire

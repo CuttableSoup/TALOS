@@ -29,6 +29,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from . import _kernels
 from .platform import LaserConfig, ResourceConfig
 from .sun import Timeline
 
@@ -36,6 +37,8 @@ _EPS = 1e-9
 SIGMA = 5.670374419e-8
 _H_STEP = 5.0  # s, RK2 step in the sensible regions
 _PROBE_S = 10.0  # wait_for search step before bisection
+_NO_LIT = np.ones(1, dtype=bool)  # placeholder timeline arrays for the kernels (no environment)
+_NO_F = np.zeros(1)
 
 
 @dataclass
@@ -63,6 +66,24 @@ class ResourceState:
         self._H1 = C * (c.pcm_melt_k - c.t_min_k)  # melt starts
         self._H2 = self._H1 + c.pcm_latent_j  # fully melted
         self.h_max = self._H2 + C * (c.t_max_k - c.pcm_melt_k)
+        self._K = self._kernel_consts()
+
+    def _kernel_consts(self) -> np.ndarray:
+        """Constants for the numba state machine (_kernels.r_*); layout fixed there."""
+        c = self.cfg
+        return np.array([
+            self._H1, self._H2, c.heat_capacity_j_k, c.t_min_k, c.pcm_melt_k, self.h_max,  # 0-5
+            c.radiator_area_m2, c.radiator_dT_k, c.radiator_emissivity, c.radiator_earth_view,  # 6-9
+            c.earth_ir_w_m2, c.radiator_absorptivity, c.radiator_other_load_w_m2,  # 10-12
+            c.fin_efficiency, c.radiator_sides, c.battery_capacity_j, c.battery_rt_eff,  # 13-16
+            c.bus_power_w, self.p_elec, self.p_heat, self.p_array_nominal, c.radiator_turndown_min,  # 17-21
+        ], dtype=float)
+
+    def _env_args(self):
+        e = self.env
+        if e is None:
+            return False, _NO_LIT, _NO_F, _NO_F, 1.0
+        return True, e.lit, e.array_factor, e.albedo_w_m2, float(e.step_s)
 
     # --- nominal rates [W] ---
     @property
@@ -146,6 +167,9 @@ class ResourceState:
         """Integrate dH/dt = p_in - P_rad(T(H)) for ``dt`` s (constant environment), or
         until H reaches ``goal``. Below the floor the radiator is throttled.
         Returns (H, elapsed, time spent held at the floor)."""
+        if _kernels.HAVE_NUMBA:
+            return _kernels.r_evolve(float(H), float(p_in), float(dt), float(albedo),
+                                     0.0 if goal is None else float(goal), goal is not None, self._K)
         t = 0.0
         if goal is not None and H == goal:
             return H, 0.0, 0.0
@@ -188,6 +212,12 @@ class ResourceState:
         """Idle (not firing) until ``t_new``."""
         if t_new - self.t < -_EPS:
             raise ValueError(f"cannot advance backwards ({self.t} -> {t_new})")
+        if _kernels.HAVE_NUMBA:
+            (self.t, self.heat_j, self.soc_j, self.heater_j, self.brownout_s, self.discharge_j) = \
+                _kernels.r_advance(float(self.t), float(self.heat_j), float(self.soc_j), float(self.heater_j),
+                                   float(self.brownout_s), float(self.discharge_j), float(t_new), self._K,
+                                   *self._env_args())
+            return
         cap = self.cfg.battery_capacity_j
         while self.t < t_new - 1e-12:
             lit, pc, alb, end = self._seg(self.t)
@@ -206,6 +236,9 @@ class ResourceState:
 
     def max_fire_s(self, cap: float = 600.0) -> float:
         """Longest burst that can start now."""
+        if _kernels.HAVE_NUMBA:
+            return _kernels.r_max_fire(float(self.t), float(self.heat_j), float(self.soc_j), float(cap), self._K,
+                                       *self._env_args(), bool(self.fire_in_eclipse))
         if self.heat_j >= self.h_max:
             return 0.0
         H, soc, t, f = self.heat_j, self.soc_j, self.t, 0.0
@@ -254,6 +287,10 @@ class ResourceState:
 
     def wait_for(self, f: float, cap: float = 6 * 3600.0) -> float:
         """Idle seconds until a burst of ``f`` seconds fits (inf if not within ``cap``)."""
+        if _kernels.HAVE_NUMBA:
+            return _kernels.r_wait_for(float(self.t), float(self.heat_j), float(self.soc_j), float(self.heater_j),
+                                       float(self.brownout_s), float(self.discharge_j), float(f), float(cap),
+                                       self._K, *self._env_args(), bool(self.fire_in_eclipse))
         if self.max_fire_s() >= f - 1e-9:
             return 0.0
         if self._never_fits(f):
