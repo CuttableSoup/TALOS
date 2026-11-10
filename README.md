@@ -89,6 +89,8 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
   `python scripts/compare_scores.py DAYS`. Single run with progress log:
   `python scripts/run_baseline.py DAYS --out runs/x [--threads N] [--config path.toml] [--set section.key=value ...]`.
   Without `pip install -e .`, set `PYTHONPATH=src` first.
+- 3D playback: `python scripts/render_run.py --config config/design.toml --days 1 --out
+  runs/render/x.html --serve` (see "Playback viewer" below).
 - Scenarios: `config/baseline.toml` (reference, all earlier results) and `config/design.toml`
   (design baseline for long runs: 60 m² radiator, 2 kWh supercap, 20 s bursts). A TOML may
   start with `base = "other.toml"` and list only the keys that differ.
@@ -680,6 +682,29 @@ are early on the ramp, so compare rows only; $/removal = 7-day rate × mission l
 | `config/design.toml` (60 m², supercap 500k cycles, 20 s) | 17.16 | 14.02 | 335 | 3.15 (storage) | $12k |
 Removals respond more than Δv (×1.9 for ×1.41) because each object needs fewer visits.
 The design's mission life is now storage-limited at 3.2 yr (was 5 yr at 1M cycles).
+
+## Playback viewer (2026-11-09)
+`scripts/render_run.py` writes a self-contained CesiumJS page for a run window: every
+object as a GPU point (~70k), the platforms, a beam in the platform's colour during each
+burst, the current targets' orbits, and each engaged object's new orbit after every burst
+(amber = engaged, red = removed). HUD: clock, speed (1–3600×), per-platform state (firing
+target / time to next burst), window tallies, recent bursts; click a point for its size,
+μ, material, orbit and burst history; click a platform to follow it. Toggles: inertial
+frame, target orbits, colour untouched debris by μ, thin the untouched debris.
+- Simulates the scenario to the window end (1 day of `design.toml`: 13 s), or renders an
+  existing run's events (`--events`, plus `--checkpoint` for late windows in long runs).
+  Events now carry the post-burst mean elements (`a_after_m` … `M_after_rad` at
+  `t_elements_s`); event logs from before 2026-11-09 lack them and are rejected.
+- Browser propagation (`src/talos/viewer/orbit.js`) is the J2 mean-element model of
+  `talos.propagator` without drag; tests/test_render.py checks it against Python under Node
+  (< 1 mm). The exporter reports the gap between the drawn target and the sim's at
+  mid-burst: 1-day design window median 20 m, p95 130 m, max 0.84 km.
+- Cesium 1.119.0 from jsDelivr (needs internet). The globe's workers do not run from a
+  `file://` page: use `--serve`, or `python -m http.server 8765 -d <folder>`; the page says so.
+- Headless Chrome (SwiftShader, no GPU): ~21 fps with all 70k points; a real GPU should be
+  well above that. The untouched-debris thinning option is there if a machine struggles.
+- Not drawn: drag between bursts, natural decays and new background objects (an object
+  added during the run appears at its first burst), ablation fragments.
 
 ## Next step
 Multi-year run of `config/design.toml` with the corrected η₁ basis (overnight) after a source-rate check (where the removal rate settles); Latin-hypercube bands on the design including fragmentation 0–1 %, Cm ÷3 to ×2, thermal coupling; thermal coupling at 355 nm / 100 ps (melt bound); absolute pointing budget; detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.

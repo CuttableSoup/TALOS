@@ -52,6 +52,15 @@ class EngagementEvent:
     perigee_alt_after_m: float
     removed: bool
     committed: bool = False  # target was in the planner's commit set
+    # Mean elements right after the burst, at epoch t_elements_s (mid-burst): what the
+    # object flies from then on (playback / orbit reconstruction). NaN in old checkpoints.
+    t_elements_s: float = float("nan")
+    a_after_m: float = float("nan")
+    e_after: float = float("nan")
+    i_after_rad: float = float("nan")
+    raan_after_rad: float = float("nan")
+    argp_after_rad: float = float("nan")
+    M_after_rad: float = float("nan")
 
 
 @dataclass
@@ -417,6 +426,9 @@ def run_engagements(
                     dv_norm=float(np.linalg.norm(res.dv_vec)), optical_energy_j=res.optical_energy_j,
                     perigee_alt_before_m=float(el_tm.rp - R_EARTH),
                     perigee_alt_after_m=float(el_new.rp - R_EARTH), removed=gone, committed=is_commit,
+                    t_elements_s=float(tm), a_after_m=float(el_new.a), e_after=float(el_new.e),
+                    i_after_rad=float(el_new.i), raan_after_rad=float(el_new.raan),
+                    argp_after_rad=float(el_new.argp), M_after_rad=float(el_new.M),
                 ))
                 k = int(np.searchsorted(t, ready_at[plat.name]))
         if on_chunk is not None:

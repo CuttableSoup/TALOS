@@ -21,7 +21,7 @@ dev = ["pytest>=7"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-talos = ["data/*.npz"]
+talos = ["data/*.npz", "viewer/*.html", "viewer/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
