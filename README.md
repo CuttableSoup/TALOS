@@ -102,9 +102,16 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
   (range-rate bound), and the coarse sieve runs at 8×/2×/1× its step. Build (1-yr
   lifetime filter) 61 s → 2.3 s, end-of-run lifetime/risk ~10 s → ~1 s, 33 → ~16 s
   per sim day; quarter-day run 73 s → 4.8 s with identical events. A 1-yr run is
-  now ~1.6 h.
-- What remains is serial Python scheduling (candidate evaluation, burst
-  integration, resource state machine): a run at 8 threads is as fast as at 32.
+  now ~1.6 h (before the loop was compiled; see below).
+- Scheduling loop compiled (2026-11): candidate burst prediction, the
+  resource state machine (evolve / advance / max_fire_s / wait_for; same
+  operation order, bit-identical to the Python fallback) and window extraction
+  run in numba; screening kernels index whole-population arrays from a
+  per-chunk cache. 3-day ORDEM baseline 51 s → 30 s (~9.5 s per sim day, 3.5×
+  vs 33 s before the speed work); identical events throughout. A 1-yr run is
+  ~1 h. What is left is mostly the compiled kernels themselves plus Python
+  glue per engagement (orbit updates, event records); runs do not scale past
+  ~8 threads.
   Sweeps should use `n_jobs = 4, threads_per_job = 8` (4 runs for the price of one).
 - Checkpoints: runs with an out_dir write `checkpoints/<name>.pkl` (full state,
   ~15 MB + events) every `run.checkpoint_days` (30). `run_baseline.py DAYS --resume
