@@ -82,18 +82,23 @@ class PlannerConfig:
 @dataclass(frozen=True)
 class RiskConfig:
     """Risk transfer (roadmap 6): time engaged objects spend inside protected altitude
-    shells after the laser vs on their natural decay. Shell bounds are PICKS."""
+    shells after the laser vs on their natural decay, and the expected collisions with
+    each shell's active satellites (talos.risk). Shell bounds and actives are PICKS."""
 
     enabled: bool = True
-    shell_names: tuple[str, ...] = ("crewed", "starlink")
-    shell_lo_m: tuple[float, ...] = (370e3, 530e3)
-    shell_hi_m: tuple[float, ...] = (430e3, 575e3)
+    shell_names: tuple[str, ...] = ("crewed", "starlink", "band")
+    shell_lo_m: tuple[float, ...] = (370e3, 530e3, 600e3)
+    shell_hi_m: tuple[float, ...] = (430e3, 575e3, 1000e3)
+    # summed collision cross-section of the active satellites in each shell [m^2]
+    shell_active_area_m2: tuple[float, ...] = (1800.0, 2.4e5, 1.5e4)
+    v_rel_m_s: float = 10e3  # mean debris-satellite relative speed
 
     def shells(self) -> dict[str, tuple[float, float]] | None:
         if not self.enabled or not self.shell_names:
             return None
-        if not len(self.shell_names) == len(self.shell_lo_m) == len(self.shell_hi_m):
-            raise ValueError("[risk] shell_names / shell_lo / shell_hi lengths differ")
+        if not (len(self.shell_names) == len(self.shell_lo_m) == len(self.shell_hi_m)
+                == len(self.shell_active_area_m2)):
+            raise ValueError("[risk] shell_names / shell_lo / shell_hi / shell_active_area lengths differ")
         return {n: (lo, hi) for n, lo, hi in zip(self.shell_names, self.shell_lo_m, self.shell_hi_m)}
 
 

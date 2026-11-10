@@ -70,3 +70,23 @@ def test_lasered_path_includes_in_run_residence():
     assert np.all(np.isfinite(li))
     np.testing.assert_allclose(res.shell_res_initial_s[:, 0], li, rtol=1e-6)
     np.testing.assert_allclose(res.shell_res_final_s[:, 0], 1800.0 + (lf - tm), rtol=1e-6)
+
+
+def test_active_collision_metric():
+    from talos import risk
+    from talos.constants import R_EARTH, YEAR
+
+    sc = load_scenario()
+    k = risk.shell_rates_per_yr(sc.risk)
+    r = R_EARTH + 552.5e3
+    assert k["starlink"] == pytest.approx(2.4e5 * 1e4 / (4 * np.pi * r**2 * 45e3) * YEAR)
+    row = {"sim_hours": 24.0 * 365.25 / 12,  # one month
+           "risk_crewed_obj_yr_natural": 1.0, "risk_crewed_obj_yr_after": 3.0,
+           "risk_starlink_obj_yr_natural": 2.0, "risk_starlink_obj_yr_after": 4.0,
+           "risk_band_obj_yr_natural": 100.0, "risk_band_obj_yr_after": 20.0}
+    out = risk.evaluate(sc, row)
+    nat = k["crewed"] * 1 + k["starlink"] * 2 + k["band"] * 100
+    aft = k["crewed"] * 3 + k["starlink"] * 4 + k["band"] * 20
+    assert out["active_collisions_avoided"] == pytest.approx(nat - aft)
+    assert out["active_collisions_avoided_per_yr"] == pytest.approx(12 * (nat - aft))
+    assert out["risk_starlink_collisions_after"] > out["risk_starlink_collisions_natural"]  # risk transfer

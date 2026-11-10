@@ -77,4 +77,7 @@ def evaluate(sc, summary: dict) -> dict:
         "cost_musd": total / 1e6,
         "removals_mission": removals,
         "cost_per_removal_kusd": total / removals / 1e3 if removals > 0 else np.inf,
+        # active-satellite collisions avoided over the mission (talos.risk), annualised rate x life
+        "cost_per_collision_avoided_musd": (total / (summary["active_collisions_avoided_per_yr"] * life) / 1e6
+                                            if summary.get("active_collisions_avoided_per_yr", 0) > 0 else np.inf),
     }
