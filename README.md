@@ -734,5 +734,33 @@ frame, target orbits, colour untouched debris by μ, thin the untouched debris.
   design run: 1,755 removals vs 1,760, Δv/burst 11.33 vs 11.30 m/s, no slowdown. Event logs
   from before this change render with up to ~3 km target error.
 
+## 2-year design run and target score (2026-11-10)
+`config/design.toml`, 730 days (runs/design_2yr, 2 h 21 min at 32 threads). Removals peak
+in month 3 and then fall; the platforms keep firing (~60k bursts/month throughout):
+| month | 1 | 3 | 6 | 9 | 12 | 18 | 24 |
+|---|---|---|---|---|---|---|---|
+| removed | 1,760 | 2,209 | 1,525 | 1,036 | 393 | 344 | 80 |
+| Δv/burst (m/s) | 11.3 | 8.1 | 5.4 | 3.8 | 3.1 | 2.4 | 1.8 |
+| target median μ (kg/m²) | 1.8 | 2.2 | 3.1 | 4.2 | 5.9 | 6.5 | 7.8 |
+- Cause: the light targets run out. Removed within 2 years by initial μ: < 0.5: 92 %,
+  0.5–1: 84 %, 1–2: 66 %, 2–5: 31 %, ≥ 5 (47 % of the population): 1 %. Year-2 bursts go
+  89 % to objects never removed (median 18 bursts, 46 m/s total, perigee 814 → 635 km;
+  ~150 m/s is needed). The rate after year 1 is set by the μ ≥ 2 inventory and new
+  light fragments, not by scheduling.
+- Totals: 20,594 removed, 13,867 natural decays, 1 breakup (+2,000), live 69,577 → 37,300.
+  Storage life 2.66 yr; cost per removal $23.9k at the 2-year average rate (vs $10.2k
+  extrapolated from 30 days), nearer $30k at the falling rate. Crewed-band risk rises
+  slightly (+273 obj-yr/yr: lowered debris crosses it on the way down). Ran with the
+  circular between-steps drag rate (fixed since; 30-day check: 1,755 vs 1,760 removals).
+- Target score, 90 days each (runs/compare_score_90d, current code):
+  | score | removed | debris-yr removed/yr | collisions avoided/yr | Starlink risk Δ obj-yr/yr | Δv/burst |
+  |---|---|---|---|---|---|
+  | removal_progress (default) | 6,019 | 628k | 15.7 | −1,595 | 9.6 |
+  | closest_to_removal | 6,045 | 425k | 13.9 | −2,246 | 8.4 |
+  Same removals, a third less debris-years and 12 % fewer collisions avoided:
+  removal_progress stays the default. Months 1–3 are still target-rich, so this does not
+  test the late, heavy-target regime; there, removals depend on Δv per burst against
+  μ ≥ 2 objects (laser energy per burst, Cm), not on the score.
+
 ## Next step
-Multi-year run of `config/design.toml` with the corrected η₁ basis (overnight) after a source-rate check (where the removal rate settles); Latin-hypercube bands on the design including fragmentation 0–1 %, Cm ÷3 to ×2, thermal coupling; thermal coupling at 355 nm / 100 ps (melt bound); absolute pointing budget; detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.
+Δv per burst against μ ≥ 2 targets (the late-mission limit: burst energy, Cm by material, revisit rate) and whether a mission should be sized to the light inventory (~2 yr); Latin-hypercube bands on the design including fragmentation 0–1 %, Cm ÷3 to ×2, thermal coupling; thermal coupling at 355 nm / 100 ps (melt bound); absolute pointing budget; detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.
