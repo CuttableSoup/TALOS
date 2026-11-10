@@ -90,3 +90,20 @@ def test_active_collision_metric():
     assert out["active_collisions_avoided"] == pytest.approx(nat - aft)
     assert out["active_collisions_avoided_per_yr"] == pytest.approx(12 * (nat - aft))
     assert out["risk_starlink_collisions_after"] > out["risk_starlink_collisions_natural"]  # risk transfer
+
+
+def test_fragment_risk_counts_against_the_laser():
+    from talos import risk
+
+    sc = load_scenario()
+    k = risk.shell_rates_per_yr(sc.risk)
+    row = {"sim_hours": 24.0, "risk_band_obj_yr_natural": 10.0, "risk_band_obj_yr_after": 4.0,
+           "risk_band_obj_yr_fragments": 5.0}
+    out = risk.evaluate(sc, row)
+    assert out["active_collisions_added_by_fragments"] == pytest.approx(5 * k["band"])
+    assert out["active_collisions_avoided"] == pytest.approx((10 - 4 - 5) * k["band"])
+    s = run_scenario(load_scenario(overrides={"population.kind": "toy", "population.n_real": 3000,
+                                              "constellation.n_sats": 1, "population.min_lifetime_yr": None,
+                                              "run.duration_s": 3600.0, "ablation.fragment_prob_per_burst": 1.0,
+                                              "population.areal_density_model": "sbm"})).summary()
+    assert s["risk_band_obj_yr_fragments"] > 0
