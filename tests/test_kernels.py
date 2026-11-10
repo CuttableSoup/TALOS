@@ -98,12 +98,13 @@ def test_shared_element_args_match_per_platform():
     pop.epoch_s[:] = np.random.default_rng(14).uniform(0, 3600, len(pop))
     sat = baseline_platform(800.0)
     t = np.arange(3600.0, 4500.0)
-    args = _kernels.element_args(pop.elements, pop.ballistic_coeff, pop.epoch_s)
+    from talos.screening import chunk_cache
+
     cand = np.flatnonzero(np.arange(len(pop)) % 3 != 0)
     tup = lambda ws: sorted((w.debris_index, w.start, w.stop) for w in ws)
     ref = tup(screen_windows(sat, pop, t, candidates=cand))
     assert len(ref) > 0
-    assert tup(screen_windows(sat, pop, t, candidates=cand, elem_args=args)) == ref
+    assert tup(screen_windows(sat, pop, t, candidates=cand, cache=chunk_cache(pop))) == ref
 
 
 @pytest.mark.parametrize("activity", ["cycle", "constant"])

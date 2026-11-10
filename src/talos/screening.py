@@ -232,6 +232,28 @@ def coarse_sieve(
     return np.any(lower <= max_range_m, axis=0) | np.any(rho <= max_range_m, axis=0)
 
 
+@dataclass(frozen=True)
+class ChunkCache:
+    """Per-chunk, whole-population inputs shared by every platform's screening and the
+    candidate prediction: kernel element arguments, perigee / apogee radii, max speed,
+    radius and albedo. Objects engaged later in the chunk keep stale entries; callers
+    exclude them (``engaged``)."""
+
+    args: tuple
+    rp: np.ndarray
+    ra: np.ndarray
+    vmax: np.ndarray
+    radius: np.ndarray
+    albedo: np.ndarray
+
+
+def chunk_cache(population: DebrisPopulation) -> ChunkCache:
+    el = population.elements
+    c = lambda x: np.ascontiguousarray(x, dtype=float)
+    return ChunkCache(_kernels.element_args(el, population.ballistic_coeff, population.epoch_s),
+                      c(el.rp), c(el.ra), c(max_speed(el)), c(0.5 * population.diameter_m), c(population.albedo))
+
+
 def screen_windows(
     platform: Platform,
     population: DebrisPopulation,
@@ -243,7 +265,7 @@ def screen_windows(
     use_kernel: bool | None = None,
     sat_states: tuple[np.ndarray, np.ndarray] | None = None,
     sun_hat: np.ndarray | None = None,
-    elem_args: tuple | None = None,
+    cache: ChunkCache | None = None,
 ) -> list[Window]:
     """Memory-bounded screening: windows only, objects processed in batches.
 
@@ -251,17 +273,22 @@ def screen_windows(
     ``coarse_step_s`` enables the conservative coarse sieve (None = fine-step everything).
     Window ``debris_index`` refers to the original population index.
     ``sun_hat`` (T, 3) enables the sun gates (target sunlit, sun exclusion).
-    ``elem_args``: ``_kernels.element_args`` of the WHOLE population at its current state,
-    computed once and shared by all platforms in a chunk (kernel path only).
+    ``cache``: ``chunk_cache(population)``, computed once per chunk and shared by all
+    platforms (kernel path only).
     """
     idx = np.arange(len(population)) if candidates is None else np.asarray(candidates)
     rmax = platform.atp.engage_range_max_m
-    idx = idx[apsis_filter(platform.orbit, population.elements[idx], rmax)]
+    if cache is not None:
+        o = platform.orbit
+        gap = np.maximum(np.maximum(cache.rp[idx] - o.ra, o.rp - cache.ra[idx]), 0.0)  # = apsis_filter
+        idx = idx[gap <= rmax]
+    else:
+        idx = idx[apsis_filter(platform.orbit, population.elements[idx], rmax)]
     if use_kernel is None:
         use_kernel = _kernels.HAVE_NUMBA
     if use_kernel and len(idx) and len(t) > 1:
         return _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_s, sat_states,
-                                      sun_hat, elem_args)
+                                      sun_hat, cache)
     if coarse_step_s is not None and len(idx) and len(t) > 1:
         keep = np.zeros(len(idx), dtype=bool)
         for k in range(0, len(idx), 4 * batch):
@@ -283,7 +310,7 @@ def screen_windows(
 
 
 def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_s, sat_states=None,
-                           sun_hat=None, elem_args=None) -> list[Window]:
+                           sun_hat=None, cache=None) -> list[Window]:
     """Numba path: parallel coarse sieve, then parallel fused fine gates.
 
     ``sat_states`` = (r, v) of the platform on grid ``t`` (precomputed/cached);
@@ -291,17 +318,26 @@ def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_
     """
     atp = platform.atp
     rmax = atp.engage_range_max_m
-    sub = population.elements[idx]
-    args = (_kernels.element_args(sub, population.ballistic_coeff[idx], population.epoch_s[idx])
-            if elem_args is None else tuple(x[idx] for x in elem_args))
+    if cache is None:  # kernel inputs for the subset; sel indexes into it
+        sub = population.elements[idx]
+        args = _kernels.element_args(sub, population.ballistic_coeff[idx], population.epoch_s[idx])
+        vdeb = np.ascontiguousarray(max_speed(sub), dtype=float)
+        radius = np.ascontiguousarray(0.5 * population.diameter_m[idx], dtype=float)
+        albedo = np.ascontiguousarray(population.albedo[idx], dtype=float)
+        base = idx
+        sel = np.arange(len(idx), dtype=np.int64)
+    else:  # whole-population inputs; sel = population indices
+        args, vdeb, radius, albedo = cache.args, cache.vmax, cache.radius, cache.albedo
+        base = None
+        sel = np.ascontiguousarray(idx, dtype=np.int64)
+    vsat = float(max_speed(platform.orbit))
     if sat_states is not None:
         r_s, v_s = sat_states
-    vmax = np.ascontiguousarray(max_speed(platform.orbit) + max_speed(sub), dtype=float)
     if coarse_step_s is not None:
         # multi-level sieve: 8x and 2x coarser passes drop far objects cheaply, then the coarse_step_s
         # pass. Both bounds are conservative, so the surviving windows are unchanged.
         for step_s in (8 * coarse_step_s, 2 * coarse_step_s, coarse_step_s):
-            if not len(idx):
+            if not len(sel):
                 break
             if sat_states is not None:
                 dt = t[1] - t[0]
@@ -312,11 +348,8 @@ def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_
                 n = max(1, int(np.ceil((t[-1] - t[0]) / step_s)))
                 tc = np.linspace(t[0], t[-1], n + 1)
                 r_sc, _ = states_at(platform.orbit, tc)
-            keep = _kernels.sieve_kernel(tc, np.ascontiguousarray(r_sc), vmax, rmax, *args)
-            idx = idx[keep]
-            vmax = vmax[keep]
-            args = tuple(x[keep] for x in args)
-    if not len(idx):
+            sel = sel[_kernels.sieve_kernel(tc, np.ascontiguousarray(r_sc), vsat, vdeb, sel, rmax, *args)]
+    if not len(sel):
         return []
     if sat_states is None:
         r_s, v_s = states_at(platform.orbit, t)
@@ -331,12 +364,11 @@ def _screen_windows_kernel(platform, population, t, idx, min_steps, coarse_step_
         bool(sun_hat is not None and atp.detection_model == "passive_optical"), float(atp.detection_range_m),
         float(atp.detect_mag_limit), float(atp.track_mag_limit), float(atp.earth_background_penalty_mag),
         max(1, int(np.ceil(atp.acquisition_s / (t[1] - t[0]) - 1e-9))),
-        np.ascontiguousarray(0.5 * population.diameter_m[idx], dtype=float),
-        np.ascontiguousarray(population.albedo[idx], dtype=float),
-        vmax,
+        radius, albedo, vsat, vdeb, sel,
         *args,
     )
-    return [Window(int(idx[w.debris_index]), w.start, w.stop) for w in find_windows(mask, min_steps)]
+    orig = sel if base is None else base[sel]
+    return [Window(int(orig[w.debris_index]), w.start, w.stop) for w in find_windows(mask, min_steps)]
 
 
 def screen(

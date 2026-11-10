@@ -29,7 +29,7 @@ from .propagator import propagate
 from .platform import Platform
 from .resources import ResourceState
 from .scheduler import burst_states, evaluate_candidates, pick
-from .screening import screen_windows
+from .screening import chunk_cache, screen_windows
 
 if TYPE_CHECKING:
     from .dynamics import PopulationDynamics
@@ -274,11 +274,10 @@ def run_engagements(
         # kernel element arguments for the whole population, shared by all platforms this chunk.
         # Objects engaged later in the chunk keep stale args, but they are excluded via ``engaged``.
         # Also used for candidate prediction: engaged objects are excluded from both.
-        elem_args = (_kernels.element_args(pop.elements, pop.ballistic_coeff, pop.epoch_s)
-                     if _kernels.HAVE_NUMBA else None)
+        cache = chunk_cache(pop) if _kernels.HAVE_NUMBA else None
         for p_idx, plat in enumerate(platforms):
             wins = screen_windows(plat, pop, t, candidates=np.flatnonzero(~(removed | decayed)), batch=batch,
-                                  sun_hat=sun_hat, elem_args=elem_args)
+                                  sun_hat=sun_hat, cache=cache)
             if not wins:
                 continue
             k = int(np.searchsorted(t, ready_at[plat.name]))
@@ -294,7 +293,8 @@ def run_engagements(
                 rs = state[plat.name]
                 rs.advance(max(rs.t, t[k] + plat.atp.settle_s))
                 cands = evaluate_candidates(plat, pop, open_w, t, k, params, max_fire_s=rs.max_fire_s(),
-                                            pulse_stride=predict_pulse_stride, elem_args=elem_args)
+                                            pulse_stride=predict_pulse_stride,
+                                            elem_args=None if cache is None else cache.args)
                 is_commit = False
                 if planner is not None and cands:
                     mine = [c for c in cands if planner.is_committed(c.debris_index)]

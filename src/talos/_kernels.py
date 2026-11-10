@@ -79,20 +79,24 @@ if HAVE_NUMBA:
         return r, v
 
     @nb.njit(parallel=True, cache=True)
-    def sieve_kernel(tc, r_sat, vmax, rmax, a0, adot, e, inc, raan0, raan_dot, argp0, argp_dot, M0, M_dot):
+    def sieve_kernel(tc, r_sat, vsat, vdeb, sel, rmax, a0, adot, e, inc, raan0, raan_dot, argp0, argp_dot,
+                     M0, M_dot):
         """Conservative coarse sieve; see screening.coarse_sieve for the bound.
-        ``tc`` may be non-uniform (the interval length is used per step)."""
-        Tc, N = tc.shape[0], a0.shape[0]
+        ``tc`` may be non-uniform (the interval length is used per step). Objects are
+        ``sel`` (indices into the element arrays); range-rate bound vsat + vdeb[j]."""
+        Tc, N = tc.shape[0], sel.shape[0]
         keep = np.zeros(N, dtype=np.bool_)
-        for j in nb.prange(N):
+        for jj in nb.prange(N):
+            j = sel[jj]
+            vmax = vsat + vdeb[j]
             prev = 0.0
             for k in range(Tc):
                 a, O, w, M = _elem_at(j, tc[k], a0, adot, raan0, raan_dot, argp0, argp_dot, M0, M_dot)
                 rx, ry, rz, _, _, _ = _rv(a, e[j], inc[j], O, w, M)
                 dx, dy, dz = rx - r_sat[k, 0], ry - r_sat[k, 1], rz - r_sat[k, 2]
                 rho = math.sqrt(dx * dx + dy * dy + dz * dz)
-                if rho <= rmax or (k > 0 and 0.5 * (prev + rho - vmax[j] * (tc[k] - tc[k - 1])) <= rmax):
-                    keep[j] = True
+                if rho <= rmax or (k > 0 and 0.5 * (prev + rho - vmax * (tc[k] - tc[k - 1])) <= rmax):
+                    keep[jj] = True
                     break
                 prev = rho
         return keep
@@ -121,8 +125,8 @@ if HAVE_NUMBA:
     @nb.njit(parallel=True, cache=True)
     def fine_mask_kernel(t, r_sat, v_sat, rmin, rmax, clear_r, cos_for, slew_max,
                          sun, use_sun, need_lit, cos_excl,
-                         use_det, det_range, det_lim, trk_lim, bg_pen, acq_steps, radius, albedo, vmax,
-                         a0, adot, e, inc, raan0, raan_dot, argp0, argp_dot, M0, M_dot):
+                         use_det, det_range, det_lim, trk_lim, bg_pen, acq_steps, radius, albedo, vsat, vdeb,
+                         sel, a0, adot, e, inc, raan0, raan_dot, argp0, argp_dot, M0, M_dot):
         """(T, n) engagement mask: range, Earth-limb LOS, field of regard, slew rate and,
         with ``use_sun``, target sunlit (cylindrical shadow) + sun-exclusion cone.
         With ``use_det`` (requires use_sun) a per-object detection/track state machine
@@ -130,12 +134,15 @@ if HAVE_NUMBA:
         establish a track, keep it while mag <= trk_lim; engagement requires a track.
         A target detectable at the first step is assumed already tracked (chunk start).
         ``sun``: (T, 3) unit vectors (ignored unless use_sun).
-        ``vmax``: per-object bound on the range rate (v_sat,max + v_deb,max). Out of range,
+        Objects are ``sel`` (indices into the element / radius / albedo / vdeb arrays); mask
+        column jj is object sel[jj]. Range-rate bound vsat + vdeb[j]. Out of range,
         steps that cannot be back within range yet are skipped: exact, since every skipped
         step would also be 'far' (mask False, track reset)."""
-        T, N = t.shape[0], a0.shape[0]
+        T, N = t.shape[0], sel.shape[0]
         mask = np.zeros((T, N), dtype=np.bool_)
-        for j in nb.prange(N):
+        for jj in nb.prange(N):
+            j = sel[jj]
+            vmax = vsat + vdeb[j]
             tracked = False
             run = 0
             nxt = 0
@@ -152,7 +159,7 @@ if HAVE_NUMBA:
                 if rho > r_far:
                     tracked = False
                     run = 0
-                    gap = (rho - r_far) / vmax[j] * (1.0 - 1e-9)  # earliest possible re-entry
+                    gap = (rho - r_far) / vmax * (1.0 - 1e-9)  # earliest possible re-entry
                     tk = t[k]
                     while nxt < T and t[nxt] - tk < gap:
                         nxt += 1
@@ -204,7 +211,7 @@ if HAVE_NUMBA:
                 cz = dx * wy - dy * wx
                 if math.sqrt(cx * cx + cy * cy + cz * cz) / d2 > slew_max:
                     continue
-                mask[k, j] = True
+                mask[k, jj] = True
         return mask
 
 
