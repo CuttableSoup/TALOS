@@ -463,6 +463,46 @@ so compare variants, don't annualise.
 - Risk transfer (Starlink-shell object-years, lasered − natural) is ±hundreds per
   year with no consistent sign across variants: too noisy at 30 days to rank.
 
+## Burst length × energy storage × cost per removal (2026-11)
+21 days, ORDEM + SBM baseline (`python scripts/compare_design.py 21` →
+runs/compare_design). Storage presets and every cost coefficient are picks
+(Placeholders table); "credited/yr" is the 21-day rate annualised (still on
+its ramp), and cost per removal = constellation cost / (that rate × mission
+life). Compare rows; don't quote the absolute dollars.
+| variant | burst (s) | eng/hr/sat | Δv/eng | removed | credited/yr | DoD | storage life (yr) | mass/sat (kg) | life (limit) | cost/removal |
+|---|---|---|---|---|---|---|---|---|---|---|
+| base: 20 m², Li-ion 2 kWh, 10 s | 10 | 10.0 | 5.8 | 171 | 3.0k | 29 % | 0.46 | 1837 | 0.46 (storage) | $289k |
+| 20 s bursts | 20 | 5.0 | 10.9 | 216 | 3.8k | 56 % | 0.30 | 1837 | 0.30 (storage) | $350k |
+| longest feasible burst | 24.7 | 3.9 | 13.0 | 197 | 3.4k | 70 % | 0.26 | 1837 | 0.26 (storage) | $437k |
+| longest, ready at 20 s | ≤ 24.7 | 4.8 | 11.1 | 186 | 3.2k | 58 % | 0.29 | 1837 | 0.29 (storage) | $420k |
+| PCM 75 kg, longest | 31.9 | 3.3 | 15.7 | 240 | 4.2k | 89 % | 0.20 | 1902 | 0.20 (storage) | $481k |
+| PCM 75 kg + Li-ion 4 kWh, longest | 47.5 | 2.1 | 20.7 | 215 | 3.7k | 67 % | 0.51 | 1924 | 0.51 (storage) | $214k |
+| supercap 2 kWh, 20 s | 20 | 5.4 | 11.1 | 248 | 4.3k | 56 % | 20 | 2336 | 5.0 (design) | **$25k** |
+| LTO 4 kWh, 20 s | 20 | 5.2 | 10.9 | 222 | 3.9k | 28 % | 2.0 | 1890 | 2.0 (storage) | $55k |
+| 60 m², Li-ion 2 kWh, 20 s | 20 | 15.9 | 9.3 | 712 | 12.4k | 55 % | 0.09 | 2357 | 0.09 (storage) | $433k |
+| 60 m², supercap 2 kWh, 20 s | 20 | 17.4 | 9.0 | 733 | 12.7k | 55 % | 6.2 | 2856 | 5.0 (design) | **$10k** |
+| 60 m², LTO 4 kWh, 20 s | 20 | 16.7 | 9.2 | 747 | 13.0k | 28 % | 0.62 | 2410 | 0.62 (storage) | $65k |
+| 60 m², PCM 75 kg, LTO 4 kWh, longest | 53.6 | 6.2 | 21.5 | 818 | 14.2k | 74 % | 0.51 | 2475 | 0.51 (storage) | $73k |
+- Storage chemistry decides cost per removal (10–40×), not removals: with
+  Li-ion the pack wears out in 0.1–0.5 yr in every design, so the platform's
+  cost is spread over a few months of removals. A 2 kWh supercapacitor bank
+  (400 kg at 5 Wh/kg) reaches the 5-yr design life and is cheapest per removal
+  in spite of its mass; its 95 % round trip also cuts waste heat (+15 %
+  removals vs Li-ion at 20 s bursts). LTO sits between (0.6–2 yr).
+- Burst length: ~20–32 s is best. 20 s: +26 % removals over 10 s; the longest
+  feasible burst with the 25 kg store (24.7 s) does worse than 20 s (longer waits
+  for a near-full store, fewer engagements); with a 75 kg store, 32 s bursts give
+  +40 %, but 48 s bursts fall back. Firing at 20 s readiness with a 25 s cap
+  does not help.
+- Radiator 60 m² ≈ 3× removals in every storage option (as before); the most
+  removals (818 in 21 d) come from 60 m² + 75 kg PCM + 54 s bursts, but its LTO
+  pack lasts 0.5 yr.
+- Best per removal here: 60 m², supercap 2 kWh, 20 s bursts — ~$10k per
+  credited removal on these picks, 4 sats × 2.9 t. That figure uses the 21-day
+  rate × 5 yr; the 1-yr run showed the rate peaking and then falling as the light
+  tail is used up, so the 5-yr removal total and the $/removal are optimistic.
+  The next step is a multi-year run of this design (checkpoint + resume).
+
 ## Gate 4 vs ORDEM: encounter flux along the platform orbit (2026-11)
 The rate at which objects enter a sphere of radius R around the platform is
 flux × πR² (any direction distribution, density uniform on the scale of R), so
