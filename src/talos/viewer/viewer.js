@@ -36,34 +36,64 @@
   const evOf = new Map(); // object -> its window events
   for (let k = 0; k < E; k++) { const o = A.ev_obj[k]; if (!evOf.has(o)) evOf.set(o, []); evOf.get(o).push(k); }
 
-  let applied = 0, tApplied = -Infinity;
+  let applied = 0, tApplied = -Infinity, snapsDone = 0;
   const ptr = new Int32Array(P);
   const tally = { bursts: 0, removed: 0, dv: 0 };
   let colourDirty = true;
+  // bursts are applied when they end; the export orders them by start
+  const order = Array.from({ length: E }, (_, k) => k).sort((x, y) => A.ev_t1[x] - A.ev_t1[y]);
+  const S = A.snap_t.length;
+  // objects that enter (new background / replacement objects) or decay naturally in the window
+  const changing = [];
+  for (let o = 0; o < N; o++) if (A.obj_t_add[o] > 0 || A.obj_t_gone[o] < Infinity) changing.push(o);
+  const liveAt = (o, t) => (A.obj_t_add[o] <= t && t < A.obj_t_gone[o] ? 1 : 0);
 
   function reset() {
     for (const k of EL) st[k].set(A["obj_" + k]);
     st.ep.fill(0);
     for (let o = 0; o < N; o++) O.j2Rates(st.a[o], st.e[o], st.i[o], rates, o);
     engaged.set(A.obj_engaged_before); removed.set(A.obj_removed_before);
-    for (let o = 0; o < N; o++) visible[o] = A.obj_hidden[o] ? 0 : 1;
-    applied = 0; tApplied = -Infinity; ptr.fill(0);
+    for (let o = 0; o < N; o++) visible[o] = liveAt(o, 0);
+    applied = 0; snapsDone = 0; tApplied = -Infinity; ptr.fill(0);
     tally.bursts = 0; tally.removed = 0; tally.dv = 0;
     colourDirty = true;
   }
   function applyEvent(k) {
     const o = A.ev_obj[k];
-    EL.forEach((name, j) => (st[name][o] = A.ev_el[6 * k + j]));
-    st.ep[o] = A.ev_tm[k];
-    O.j2Rates(st.a[o], st.e[o], st.i[o], rates, o);
-    engaged[o] = 1; visible[o] = 1;
+    if (A.ev_keep_el[k]) {  // else a decay step during the burst already holds the sim's elements
+      EL.forEach((name, j) => (st[name][o] = A.ev_el[6 * k + j]));
+      st.ep[o] = A.ev_tm[k];
+      O.j2Rates(st.a[o], st.e[o], st.i[o], rates, o);
+    }
+    engaged[o] = 1;
     if (A.ev_removed[k] && !removed[o]) { removed[o] = 1; tally.removed++; }
     tally.bursts++; tally.dv += A.ev_dv[k];
     if (!colourDirty) styleObj(o);
   }
+  function applySnapshot(s) {  // the sim's daily decay + re-epoch of every live object
+    const base = s * N * 6, ts = A.snap_t[s];
+    for (let o = 0; o < N; o++) {
+      const q = base + 6 * o;
+      if (Number.isNaN(A.snap_el[q])) continue;
+      st.a[o] = A.snap_el[q]; st.e[o] = A.snap_el[q + 1]; st.i[o] = A.snap_el[q + 2];
+      st.raan[o] = A.snap_el[q + 3]; st.argp[o] = A.snap_el[q + 4]; st.M[o] = A.snap_el[q + 5];
+      st.ep[o] = ts;
+      O.j2Rates(st.a[o], st.e[o], st.i[o], rates, o);
+    }
+  }
   function advanceTo(t) {
     if (t < tApplied) reset();
-    while (applied < E && A.ev_t1[applied] <= t) applyEvent(applied++);
+    for (;;) {  // snapshots and burst ends, in time order (snapshot first on ties)
+      const ts = snapsDone < S ? A.snap_t[snapsDone] : Infinity;
+      const te = applied < E ? A.ev_t1[order[applied]] : Infinity;
+      if (ts <= te && ts <= t) applySnapshot(snapsDone++);
+      else if (te <= t) applyEvent(order[applied++]);
+      else break;
+    }
+    for (const o of changing) {
+      const v = liveAt(o, t);
+      if (v !== visible[o]) { visible[o] = v; if (!colourDirty) styleObj(o); }
+    }
     for (let p = 0; p < P; p++) {
       const L = byPlat[p];
       while (ptr[p] < L.length && A.ev_t1[L[ptr[p]]] < t) ptr[p]++;
@@ -315,7 +345,7 @@
       }
     }
     const recent = [];
-    for (let k = applied - 1; k >= 0 && recent.length < 7; k--) recent.push(k);
+    for (let j = applied - 1; j >= 0 && recent.length < 7; j--) recent.push(order[j]);
     $("feed").innerHTML = recent.length ? recent.map((k) => `<div data-o="${A.ev_obj[k]}">${meta.platforms[A.ev_plat[k]].name} → ${objLabel(A.ev_obj[k])} `
       + `${fmt(A.ev_dv[k], 1)} m/s · ${Math.round(A.ev_rp0[k])}→${Math.round(A.ev_rp1[k])} km${A.ev_removed[k] ? ' <span class="badge">REMOVED</span>' : ""}</div>`).join("")
       : "<div>none yet</div>";

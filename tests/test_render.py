@@ -92,3 +92,50 @@ def test_write_viewer_inlines_everything(short_run, tmp_path):
     a = payload["arrays"]["obj_a"]
     vals = np.frombuffer(base64.b64decode(a["b64"]), dtype=a["dtype"])
     assert len(vals) == data["meta"]["n_obj"] and np.all(vals > 6.3e6)
+
+
+def test_render_window_checkpoint(tmp_path):
+    from talos.render import render_window
+
+    sc = load_scenario(overrides={**BASE, "dynamics.enabled": True, "dynamics.update_days": 0.03,
+                                  "run.duration_s": 3 * 3600.0, "run.checkpoint_s": 3600.0})
+    ck = tmp_path / "ck.pkl"
+    ev = run_scenario(sc, checkpoint_path=ck).records()  # file holds the last checkpoint, c0 = 2 h
+    late = render_window(sc, ev, 2.0 * 3600, 3 * 3600.0, tmp_path / "late.html", checkpoint=ck)
+    early = render_window(sc, ev, 0.0, 3600.0, tmp_path / "early.html", checkpoint=ck)
+    missing = render_window(sc, ev, 0.0, 3600.0, tmp_path / "m.html", checkpoint=tmp_path / "none.pkl")
+    assert late["from_checkpoint"] and not early["from_checkpoint"] and not missing["from_checkpoint"]
+    assert (tmp_path / "late.html").exists() and late["n_events"] > 0
+    # with daily-decay updates the checkpoint keeps the reconstruction on the sim's targets
+    assert late["miss_km"]["max"] < 1.0 and early["miss_km"]["max"] < 1.0
+
+
+DYN = {**BASE, "dynamics.enabled": True, "dynamics.update_days": 0.03, "dynamics.breakup_rate_per_yr": 30000.0,
+       "dynamics.breakup_fragments": 50, "run.checkpoint_s": 3600.0}
+
+
+def test_replay_reproduces_sim_population(tmp_path):
+    from talos.render import Replay, _events_frame, _with_atmosphere
+    from talos.simulation import load_checkpoint
+
+    sc = load_scenario(overrides={**DYN, "run.duration_s": 2.5 * 3600.0})
+    ck = tmp_path / "ck.pkl"
+    ev = _events_frame(run_scenario(sc, checkpoint_path=ck).records())
+    want = load_checkpoint(ck)  # the sim's own state at c0 = 2 h
+    rp = _with_atmosphere(sc, lambda: Replay(sc, ev))
+    _with_atmosphere(sc, lambda: rp.advance(want["c0"], include_step_at_t=False))
+    assert len(rp.pop) == len(want["pop"]) > len(ev)  # breakups and decays were replayed too
+    for k in ("a", "e", "i", "raan", "argp", "M"):
+        np.testing.assert_array_equal(getattr(rp.pop.elements, k), getattr(want["pop"].elements, k))
+    np.testing.assert_array_equal(rp.pop.epoch_s, want["pop"].epoch_s)
+    np.testing.assert_array_equal(rp.removed | rp.decayed, want["removed"] | want["decayed"])
+
+
+def test_late_window_without_checkpoint_stays_on_target(tmp_path):
+    from talos.render import render_window
+
+    sc = load_scenario(overrides={**DYN, "run.duration_s": 3 * 3600.0})
+    ev = run_scenario(sc).records()
+    m = render_window(sc, ev, 2.0 * 3600, 3 * 3600.0, tmp_path / "late.html")
+    assert not m["from_checkpoint"] and m["n_snapshots"] >= 1 and m["n_events"] > 0
+    assert m["miss_km"]["max"] < 1.0  # decay steps before and inside the window are replayed

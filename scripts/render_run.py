@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from talos.config import load_scenario, run_scenario  # noqa: E402
-from talos.render import export_playback, write_viewer  # noqa: E402
+from talos.render import describe, render_window  # noqa: E402
 
 
 def parse_set(items):
@@ -62,12 +62,9 @@ def main():
 
         sc = load_scenario(a.config, over)
         events = pd.read_parquet(a.events)
-    data = export_playback(sc, events, t0, t1, checkpoint=a.checkpoint, max_background=a.max_background)
-    m = data["meta"]
-    path = write_viewer(data, a.out)
-    print(f"wrote {path} ({path.stat().st_size / 1e6:.1f} MB): {m['n_obj']:,} objects, {m['n_events']:,} bursts; "
-          f"target vs sim at mid-burst: median {m['miss_km']['median']:.3g} km, p95 {m['miss_km']['p95']:.3g} km, "
-          f"max {m['miss_km']['max']:.3g} km")
+    meta = render_window(sc, events, t0, t1, a.out, checkpoint=a.checkpoint, max_background=a.max_background)
+    path = Path(meta["path"])
+    print("wrote", describe(meta), flush=True)
     if a.serve:
         serve(path, a.port)
 

@@ -90,7 +90,7 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
   `python scripts/run_baseline.py DAYS --out runs/x [--threads N] [--config path.toml] [--set section.key=value ...]`.
   Without `pip install -e .`, set `PYTHONPATH=src` first.
 - 3D playback: `python scripts/render_run.py --config config/design.toml --days 1 --out
-  runs/render/x.html --serve` (see "Playback viewer" below).
+  runs/render/x.html --serve`, or `run_baseline.py ... --render-days 1` (see "Playback viewer").
 - Scenarios: `config/baseline.toml` (reference, all earlier results) and `config/design.toml`
   (design baseline for long runs: 60 m² radiator, 2 kWh supercap, 20 s bursts). A TOML may
   start with `base = "other.toml"` and list only the keys that differ.
@@ -692,19 +692,29 @@ target / time to next burst), window tallies, recent bursts; click a point for i
 μ, material, orbit and burst history; click a platform to follow it. Toggles: inertial
 frame, target orbits, colour untouched debris by μ, thin the untouched debris.
 - Simulates the scenario to the window end (1 day of `design.toml`: 13 s), or renders an
-  existing run's events (`--events`, plus `--checkpoint` for late windows in long runs).
-  Events now carry the post-burst mean elements (`a_after_m` … `M_after_rad` at
-  `t_elements_s`); event logs from before 2026-11-09 lack them and are rejected.
+  existing run's events (`--events`). `run_baseline.py --render-days 1 [--render-at
+  first|last|both]` renders automatically after a run into `<out>/render/`.
+- Exact replay (`talos.render.Replay`): the initial population is stepped through the
+  same `PopulationDynamics.step` calls the sim made (daily drag decay and re-epoch, natural
+  decays, new objects; the dynamics have their own generator), with every logged burst's
+  post-burst elements (`a_after_m` … `M_after_rad` at `t_elements_s`) written in. It
+  reproduces the sim's checkpointed population bit for bit (tests/test_render.py); a
+  checkpoint before the window only saves replay time (~0.12 s per sim day). Decay steps
+  inside the window go to the viewer as snapshots (~1.7 MB each). Event logs from before
+  2026-11-09 lack the post-burst elements and are rejected; runs with ablation
+  fragmentation are not supported (fragments come from the engagement generator).
 - Browser propagation (`src/talos/viewer/orbit.js`) is the J2 mean-element model of
   `talos.propagator` without drag; tests/test_render.py checks it against Python under Node
   (< 1 mm). The exporter reports the gap between the drawn target and the sim's at
-  mid-burst: 1-day design window median 20 m, p95 130 m, max 0.84 km.
+  mid-burst (design: day 0 median 20 m, max 0.84 km; day 1 median 20 m, max 2 km; the
+  residual is drag within a day, not drawn). Without the replay a day-1 window was off by
+  up to 106 km.
 - Cesium 1.119.0 from jsDelivr (needs internet). The globe's workers do not run from a
   `file://` page: use `--serve`, or `python -m http.server 8765 -d <folder>`; the page says so.
-- Headless Chrome (SwiftShader, no GPU): ~21 fps with all 70k points; a real GPU should be
-  well above that. The untouched-debris thinning option is there if a machine struggles.
-- Not drawn: drag between bursts, natural decays and new background objects (an object
-  added during the run appears at its first burst), ablation fragments.
+- Headless Chrome (SwiftShader, no GPU) with the globe: ~10.5 fps with all 70k points; a
+  real GPU should be well above that. The untouched-debris thinning option is there if a
+  machine struggles.
+- Not drawn: drag within a day (between decay steps).
 
 ## Next step
 Multi-year run of `config/design.toml` with the corrected η₁ basis (overnight) after a source-rate check (where the removal rate settles); Latin-hypercube bands on the design including fragmentation 0–1 %, Cm ÷3 to ×2, thermal coupling; thermal coupling at 355 nm / 100 ps (melt bound); absolute pointing budget; detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.
