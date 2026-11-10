@@ -33,6 +33,18 @@ class LaserConfig:
         return self.burst_power_w / self.prf_hz
 
 
+# Energy-storage presets for ResourceConfig (PICKS, order-of-magnitude literature values):
+# cycles at 100 % DoD, DoD exponent, pack specific energy, round-trip efficiency.
+STORAGE_PRESETS = {
+    "li_ion": dict(storage_cycles_100=5000.0, storage_cycle_exponent=1.7,
+                   storage_specific_energy_wh_kg=120.0, battery_rt_eff=0.85),
+    "lto": dict(storage_cycles_100=20000.0, storage_cycle_exponent=1.2,
+                storage_specific_energy_wh_kg=70.0, battery_rt_eff=0.90),
+    "supercap": dict(storage_cycles_100=1.0e6, storage_cycle_exponent=0.0,
+                     storage_specific_energy_wh_kg=5.0, battery_rt_eff=0.95),
+}
+
+
 @dataclass(frozen=True)
 class ATPConfig:
     """Acquisition, tracking & pointing limits."""
@@ -97,10 +109,26 @@ class ResourceConfig:
     t_min_k: float = 283.15  # heater floor (melt - 5 K)
     t_max_k: float = 290.15  # max store temperature while firing (melt + 2 K)
     # --- battery ---
-    battery_capacity_j: float = 2.0 * 3.6e6  # PLACEHOLDER (2 kWh); cycle life NOT modelled
+    battery_capacity_j: float = 2.0 * 3.6e6  # PLACEHOLDER (2 kWh)
     battery_rt_eff: float = 0.85  # discharge losses -> heat (range 0.80-0.90)
-    burst_s: float = 10.0  # max burst; platform waits until a full burst fits
+    # storage cycle life (PICKS; see STORAGE_PRESETS): N(DoD) = cycles_100 * DoD^-exponent
+    storage_cycles_100: float = 5000.0  # cycles to end of life at 100 % depth of discharge
+    storage_cycle_exponent: float = 1.7  # Woehler-type DoD sensitivity
+    storage_specific_energy_wh_kg: float = 120.0  # pack level, for the mass model
+    burst_s: float = 10.0  # longest burst (also cut by the resource limit and the target window)
+    # Readiness: after a burst the platform waits until a burst of ready_burst_s fits
+    # (None -> burst_s), capped at 95 % of the longest burst a full battery and cold store
+    # allow, so a burst_s the storage can never deliver no longer stops the platform.
+    ready_burst_s: float | None = None
     min_burst_s: float = 5.0  # PLACEHOLDER: shortest burst worth starting
+
+    def ready_s(self, laser: "LaserConfig") -> float:
+        """Burst length the platform waits for after each burst (see ready_burst_s)."""
+        from .resources import ResourceState
+
+        want = self.burst_s if self.ready_burst_s is None else self.ready_burst_s
+        feasible = ResourceState(self, laser).max_fire_s()
+        return min(want, 0.95 * feasible) if feasible < want else want
 
     @property
     def pcm_latent_j(self) -> float:

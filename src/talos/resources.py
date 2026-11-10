@@ -57,6 +57,7 @@ class ResourceState:
     bursts: int = 0
     burst_dod_sum: float = 0.0  # sum over bursts of depth of discharge (fraction of capacity)
     burst_dod_max: float = 0.0
+    storage_damage: float = 0.0  # Miner's-rule cycle damage, sum over bursts of 1 / N(DoD)
 
     def __post_init__(self) -> None:
         if self.soc_j is None:
@@ -280,6 +281,9 @@ class ResourceState:
         self.bursts += 1
         self.burst_dod_sum += dod
         self.burst_dod_max = max(self.burst_dod_max, dod)
+        if dod > 0:
+            c = self.cfg
+            self.storage_damage += dod ** c.storage_cycle_exponent / c.storage_cycles_100
 
     def _never_fits(self, f: float) -> bool:
         fresh = ResourceState(self.cfg, self.laser)

@@ -155,3 +155,28 @@ def test_numba_state_machine_matches_python(monkeypatch, with_env):
     ref = run()
     assert got == ref  # exact
     assert any(v > 0 for v in got[1::7])  # the run does wait / fire
+
+
+def test_ready_burst_capped_at_feasible():
+    las = LaserConfig()
+    feasible = ResourceState(ResourceConfig(), las).max_fire_s()
+    assert ResourceConfig(burst_s=10.0).ready_s(las) == 10.0  # fits: unchanged
+    assert ResourceConfig(burst_s=60.0).ready_s(las) == pytest.approx(0.95 * feasible)
+    assert ResourceConfig(burst_s=60.0, ready_burst_s=15.0).ready_s(las) == 15.0
+    # a wait for the capped length terminates; for the uncapped one it never does
+    s = ResourceState(ResourceConfig(burst_s=60.0), las)
+    s.fire(8.0)
+    assert np.isfinite(s.wait_for(ResourceConfig(burst_s=60.0).ready_s(las)))
+    assert np.isinf(s.wait_for(60.0))
+
+
+def test_storage_damage_miner_rule():
+    cfg = ResourceConfig(storage_cycles_100=1000.0, storage_cycle_exponent=2.0)
+    s = ResourceState(cfg, LaserConfig())
+    s.fire(10.0)
+    dod = s.burst_dod_max
+    assert 0 < dod < 1
+    assert s.storage_damage == pytest.approx(dod**2 / 1000.0)
+    flat = ResourceState(ResourceConfig(storage_cycles_100=1e6, storage_cycle_exponent=0.0), LaserConfig())
+    flat.fire(10.0)
+    assert flat.storage_damage == pytest.approx(1e-6)  # supercap-like: one cycle per burst regardless of DoD

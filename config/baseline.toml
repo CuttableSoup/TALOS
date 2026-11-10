@@ -82,9 +82,16 @@ array_area_ft2 = 1600.0
 array_specific_power_w_m2 = 250.0   # EOL [sourced range 200-300]; degradation unsourced
 wallplug_eff = 0.10            # [derived] 0.90 x 0.55 x 0.45 x 0.40; range 0.04-0.17
 bus_power_kw = 1.5             # [guess] dissipated into the thermal node
-battery_capacity_kwh = 2.0     # [guess] cycle life (~1e6 shallow cycles) not modelled
+battery_capacity_kwh = 2.0     # [guess]
 battery_rt_eff = 0.85          # [sourced, weak] 0.80-0.90; discharge losses become heat
-burst_s = 10.0
+# storage cycle life N(DoD) = cycles_100 * DoD^-exponent (Li-ion picks; presets in
+# talos.platform.STORAGE_PRESETS: li_ion / lto / supercap)
+storage_cycles_100 = 5000.0    # [pick]
+storage_cycle_exponent = 1.7   # [pick]
+storage_specific_energy_wh_kg = 120.0  # [pick] pack level
+burst_s = 10.0                 # longest burst (also cut by resources and the target window)
+# ready_burst_s = 10.0         # wait for this burst length after each burst (default burst_s,
+                               # capped at 95 % of what a full battery + cold store allow)
 min_burst_s = 5.0              # [guess]
 # radiator: q_net = fin * sides * [eps sigma T^4 - eps F_E IR - alpha albedo - other]
 radiator_area_m2 = 20.0        # [pick] dominant design choice: 20 m2 -> ~2.9 % duty
@@ -151,3 +158,15 @@ enabled = true                       # shell residence of engaged objects, natur
 shell_names = ["crewed", "starlink"] # [pick] ISS ~415-420 km + Tiangong ~380-390 km; Starlink 540-570 km shells
 shell_lo_km = [370.0, 530.0]
 shell_hi_km = [430.0, 575.0]
+
+[cost]                               # mass / life / cost per removal (talos.cost); all [pick]
+radiator_kg_m2 = 10.0                # deployable radiator incl. loop (research: ~10 kg/m2)
+array_w_kg = 100.0                   # solar array specific power incl. structure
+laser_kg_per_kw = 20.0               # laser head + pumps + loop per kW optical
+beam_director_kg = 300.0             # 1.5 m aperture + ATP
+bus_fraction = 0.3                   # bus mass / payload mass
+design_life_yr = 5.0
+laser_rated_shots = 1.0e10           # pump diode / optics shot life
+hardware_usd_per_kg = 50000.0
+launch_usd_per_kg = 3000.0
+ops_usd_per_sat_yr = 2000000.0

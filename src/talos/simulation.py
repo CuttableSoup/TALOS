@@ -184,6 +184,7 @@ def run_engagements(
     if planner is not None:
         planner.env = env
     fire_time = {p.name: 0.0 for p in platforms}
+    ready_s = {p.name: p.resources.ready_s(p.laser) for p in platforms}  # wait for this burst length
     events: list[EngagementEvent] = []
 
     names = tuple(risk_shells) if risk_shells else ()
@@ -340,7 +341,7 @@ def run_engagements(
                 fire = best.t_stop - best.t_start
                 fire_time[plat.name] += fire
                 rs.fire(fire)
-                ready_at[plat.name] = rs.t + rs.wait_for(plat.resources.burst_s)
+                ready_at[plat.name] = rs.t + rs.wait_for(ready_s[plat.name])
                 events.append(EngagementEvent(
                     platform=plat.name, debris_index=j, t_start=best.t_start, t_stop=best.t_stop,
                     n_pulses=res.n_pulses, n_fired=res.n_fired, dv_retrograde=res.dv_retrograde,
@@ -383,6 +384,10 @@ def run_engagements(
         "battery_efc_per_sat_per_yr": float(np.mean([s.discharge_j for s in sts])) / cap * yr,
         "battery_dod_mean": float(sum(s.burst_dod_sum for s in sts) / max(1, sum(s.bursts for s in sts))),
         "battery_dod_max": float(max(s.burst_dod_max for s in sts)),
+        # storage end of life (damage = 1) at this run's cycling, worst platform
+        "storage_life_yr": float(min((duration_s / YEAR) / s.storage_damage if s.storage_damage > 0 else np.inf
+                                     for s in sts)),
+        "ready_burst_s": float(np.mean(list(ready_s.values()))),
     }
     if env is not None:
         env_stats |= {

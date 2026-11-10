@@ -102,6 +102,9 @@ def run_one(cfg: RunConfig, out_dir: str | os.PathLike | None = None) -> tuple[d
            **res.summary(), **{f"planner_{k}": v for k, v in res.planner_stats.items()},
            "committed_engagement_frac": len(ev_c) / max(len(res.events), 1),
            "wall_s": time.perf_counter() - t0}
+    from .cost import evaluate
+
+    row |= evaluate(sc, row)
     events = [{"run": cfg.name, **e} for e in res.records()]
     return row, events
 

@@ -26,6 +26,7 @@ from .constants import FT2_TO_M2
 from .engagement import AblationParams
 from .platform import ATPConfig, LaserConfig, Platform, ResourceConfig, baseline_constellation
 from .atmosphere import Atmosphere, AtmosphereConfig, decimal_year
+from .cost import CostConfig
 from .dynamics import DynamicsConfig, PopulationDynamics
 from .sun import SunConfig, SunEnvironment
 
@@ -110,6 +111,7 @@ class Scenario:
     atmosphere: AtmosphereConfig = field(default_factory=AtmosphereConfig)
     dynamics: DynamicsConfig = field(default_factory=DynamicsConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
+    cost: CostConfig = field(default_factory=CostConfig)
 
 
 # suffix -> (SI suffix, converter); longest suffix wins
