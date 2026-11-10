@@ -232,7 +232,8 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
   already a beam-axis average, applying cos(45°) on top cuts Δv by another ~30%
 - Gate 1 not independent (η₂ backed out of the same L'ADROIT numbers)
 - Gate 3: 63 km confirmed (Pieters & Noomen, SDC8 paper 43) but miss distance unstated
-- Gate 4: 38/min within 250 km at 100k objects vs Phipps 19/min; ~2× gap
+- Gate 4 (toy population): 38/min within 250 km at 100k objects vs Phipps 19/min; ~2× gap
+  (see "Gate 4 vs ORDEM" below: the gap is in the population density, not the geometry)
   attributed to full-sphere cross-section and relative-speed differences
 - Subsampling invalid for a target-saturated greedy platform: run at full
   density (N = n_real). At 100k that's ~15 s per 2 sat-hours.
@@ -407,6 +408,36 @@ ORDEM 2026 + SBM μ, 4 sats, 20 kW, 365 sim days (`python scripts/compare_mu_mod
   additions are 1.6k/yr against 3.5k/yr natural decays. The background source rate is a pick.
 - Runs started from now on also write `logs/<name>.log`, one line per sim
   day, and `events/<name>.partial.parquet`, an event checkpoint saved every sim week.
+
+## Gate 4 vs ORDEM: encounter flux along the platform orbit (2026-11)
+The rate at which objects enter a sphere of radius R around the platform is
+flux × πR² (any direction distribution, density uniform on the scale of R), so
+the sim's raw entry rate within R, divided by πR², should reproduce ORDEM's
+1–10 cm flux on that orbit. `python scripts/validate_encounters_ordem.py --alt
+800` (12 h, full ORDEM population, no lifetime filter):
+| R | 25 km | 50 km | 100 km | 150 km | 200 km | 250 km | R → 0 fit | fitted table |
+|---|---|---|---|---|---|---|---|---|
+| 800 km SSO, sim / ORDEM | 0.85 ± 0.06 | 0.92 ± 0.03 | 0.92 ± 0.01 | 0.89 | 0.82 | 0.72 | **0.95 ± 0.01** | 0.96 |
+| 900 km, i 98.6° | 0.88 ± 0.05 | 0.87 ± 0.03 | 0.82 ± 0.01 | 0.73 | 0.63 | — | **0.87 ± 0.01** | 0.99 |
+| 700 km (6 h) | — | 1.09 ± 0.05 | 1.04 ± 0.03 | — | — | — | — | 0.96 |
+- At 800 km the chain (fit → sampling → propagation → screening) reproduces
+  ORDEM to 5 %, all of it from the inclination fit. The fall with R is the
+  sphere averaging density over ±R of altitude (600–1000 km band edges at
+  large R); the R → 0 value fits ratio = r₀(1 + cR²) for R ≤ 200 km.
+- At 900 km, at the top edge of the 830–910 km plateau, the sim is 13 % low
+  against a fit that matches ORDEM to 1 %. Sphere averaging over the falling
+  side (245 and 214 objects/km in the cells above vs 290) explains ~4–7 % at
+  R = 25–50 km; the rest (~2σ) is open. Eccentricity is not it (e = 0 for all
+  samples changes < 4 %). The sampler reproduces the table per cell and
+  inclination bin.
+- Forward kernel vs simulated geometry (`--kernel-check`: thick circular shells
+  of one inclination bin, 900 km, R 100 km): sim / kernel 1.02 (isotropic),
+  0.96 (30–35°), 1.01 (60–65°), 1.00 (80–85°), 1.01 (95–100°), all ± 0.02. The
+  fit's inclination kernel is right.
+- Phipps: ORDEM's own 800 km flux (1.33e-4 /m²/yr) is 50/min within 250 km
+  for uniform density, and the sim's band-limited population gives 36/min.
+  The ~2× gap to Phipps's 19/min is in the population density, not in the
+  screening geometry.
 
 ## Gate 5: lifetime vs NASA DAS 3.2.7 (2026-11)
 `talos.das` calls DAS's `Fortran.dll` LIFEDWELL (PROP3D: J2–J4, luni-solar,
