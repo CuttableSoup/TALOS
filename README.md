@@ -163,6 +163,10 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 | Breakups | `breakup_rate_per_yr`, `breakup_fragments`, `breakup_dv_sigma_m_s` | 0.5/yr × 2000 fragments, σ 50 m/s per axis | pick (NASA SBM gives ~100 m/s for A/m ~1) |
 | Radiator absorptivity | `radiator_absorptivity` | 0.20 (albedo load) | 0.16 BOL sourced; EOL pick |
 | Radiator turndown | `radiator_turndown_min` | 10 % (louvers) before heaters | pick |
+| Storage cycle life | `storage_cycles_100`, `storage_cycle_exponent` | Li-ion 5000 cycles at 100 % DoD, k 1.7 (~41k at 29 %); LTO 20k, k 1.2; supercap 1e6, k 0 | picks (order of magnitude) |
+| Storage specific energy | `storage_specific_energy_wh_kg` | Li-ion 120, LTO 70, supercap 5 Wh/kg (pack) | picks |
+| Burst readiness | `ready_burst_s` | = burst_s, capped at 95 % of the feasible burst | policy |
+| Mass / cost | `[cost]` | radiator 10 kg/m², array 100 W/kg, laser 20 kg/kW, beam director 300 kg, bus 30 %; $50k/kg hardware, $3k/kg launch, $2M/sat-yr ops; 5 yr design life, 1e10 shots | picks except radiator (research ~10 kg/m²) |
 
 ## Open issues
 - Thermal model (2026-11 research pass) is now a lumped PCM/loop node with T⁴
@@ -285,11 +289,14 @@ Likely to change the bottom line:
    parametric cycle-25 forecast; forecast values are picks)*
 4. **Hardware life** — battery cycle life (~1.1 M cycles needed), laser diode
    life by pulse count, UV optics damage/contamination, array degradation:
-   removals over the mission, not per year. *(counters done: bursts, laser
-   shots, battery equivalent full cycles and depth of discharge per sat per
-   year in the summary; no degradation model yet, as cycle limits are unsourced)*
+   removals over the mission, not per year. *(done, picks: storage cycle life by
+   Miner's rule on per-burst DoD, N = N100·DoD^-k, presets li_ion / lto /
+   supercap in `STORAGE_PRESETS`; `storage_life_yr`; laser shot life in
+   talos.cost. No array degradation or optics damage yet)*
 5. **Mass & cost model** — radiator (~10 kg/m²), PCM, arrays, battery, laser →
-   launch cost → cost per removal.
+   launch cost → cost per removal. *(done, picks: `talos.cost`, `[cost]`; every
+   sweep row gets the mass breakdown, mission life and its limit, constellation
+   cost and cost per credited removal)*
 
 Worth adding:
 6. **Risk transfer & safety** — time lowered debris spends crossing ISS /
@@ -432,15 +439,22 @@ so compare variants, don't annualise.
   3.0× at 60 m²; the old μ = 1 toy runs grew faster than linear). Δv per
   engagement falls as the platform fires more often (fewer targets to choose
   from per opportunity); saturation drops to 0.87 at 60 m².
-- PCM mass does nothing: 25 kg already covers a burst, and sustained duty is
-  set by radiator rejection, not buffer size.
+- PCM mass does nothing at 10 s bursts: 25 kg already covers a burst, and
+  sustained duty is set by radiator rejection, not buffer size. It does set
+  the longest possible burst (below).
 - Burst length is the cheapest lever: 20 s bursts give +20 % at 20 m² and
   +32–35 % at 40–60 m² (same duty, half the engagements, twice the Δv each:
   fewer 5 s settles, Δv concentrated on the objects that are being finished).
-  5 s bursts lose 40 %. The ceiling is the battery: a 30 s burst needs ~7.4 MJ
-  from a 7.2 MJ (2 kWh) pack, never fits, and the platform never fires (the
-  scheduler waits for a full burst). Longer bursts mean deeper cycles (56 %
-  DoD) on a battery that already needs ~26k equivalent full cycles a year.
+  5 s bursts lose 40 %. The ceiling is whichever store fills first: from a
+  cold store and full battery the baseline fires 26.0 s before the thermal
+  store (25 kg PCM + 0.5 MJ/K) tops out; the 2 kWh battery alone would allow
+  33.6 s. (Corrected: this section first blamed the battery.) Longest burst,
+  thermal store vs battery: PCM 25 kg → 26 s at any battery size; 75 kg → 34 s
+  (2 kWh) / 50 s (4–8 kWh); 150 kg → 34 / 67 / 86 s (2 / 4 / 8 kWh). 30 s
+  bursts never fired because the scheduler waited for a full burst that can
+  never fit; `ready_burst_s` now caps that wait at 95 % of the feasible burst.
+  Longer bursts mean deeper cycles (56 % DoD) on a battery that already needs
+  ~26k equivalent full cycles a year.
 - Wall-plug 0.15 vs 0.10: +58 % (less waste heat per joule of light).
 - Battery cycling scales with duty: ~27k EFC/sat/yr at 20 m², ~80k at 60 m²,
   against ~27–65k cycles for space Li-ion over a whole life. Every variant that
