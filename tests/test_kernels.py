@@ -154,3 +154,30 @@ def test_density_kernel_matches_numpy(monkeypatch):
     monkeypatch.setattr(_kernels, "HAVE_NUMBA", False)
     np.testing.assert_allclose(got, atm.density(h, t), rtol=1e-12)
     assert np.shape(s) == () and s == pytest.approx(atm.density(500e3, 0.0), rel=1e-12)
+
+
+@pytest.mark.parametrize("cm_model", ["plasma", "constant"])
+def test_candidate_kernel_matches_numpy(cm_model):
+    from dataclasses import replace
+
+    from talos.engagement import AblationParams
+    from talos.scheduler import evaluate_candidates
+
+    pop = toy_population(20000, np.random.default_rng(21), areal_density=0.5)
+    pop.areal_density[:] = np.random.default_rng(22).uniform(0.2, 5.0, len(pop))
+    sat = baseline_platform(800.0)
+    t = np.arange(0.0, 600.0)
+    wins = screen_windows(sat, pop, t)
+    params = replace(AblationParams(), cm_model=cm_model)
+    args = _kernels.element_args(pop.elements, pop.ballistic_coeff, pop.epoch_s)
+    n = 0
+    for k in sorted({w.start for w in wins})[:40]:
+        open_w = [w for w in wins if w.start <= k < w.stop]
+        ref = evaluate_candidates(sat, pop, open_w, t, k, params)
+        got = evaluate_candidates(sat, pop, open_w, t, k, params, elem_args=args)
+        assert [c.debris_index for c in got] == [c.debris_index for c in ref]
+        for a, b in zip(got, ref):
+            assert a.n_fired == b.n_fired and a.t_stop == b.t_stop
+            assert a.dv_retrograde == pytest.approx(b.dv_retrograde, rel=1e-6)
+        n += len(ref)
+    assert n > 20

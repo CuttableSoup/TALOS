@@ -376,6 +376,49 @@ if HAVE_NUMBA:
         return life, res
 
 
+if HAVE_NUMBA:
+
+    @nb.njit(cache=True)
+    def predict_kernel(tp, r_sat, t1, js, phi_k, th, opt, cm0, plasma, pexp, eta1_cos, mu,
+                       a0, adot, e, inc, raan0, raan_dot, argp0, argp_dot, M0, M_dot):
+        """Batched deterministic burst prediction (engagement.predict_bursts) for candidates
+        ``js`` (indices into the element arrays), pulses ``tp`` with sat positions ``r_sat``
+        (P, 3); pulse p is active for candidate c while tp[p] < t1[c]. Fluence phi = phi_k / R^2.
+        Returns (dv_vec (n, 3), dv_retrograde (n,), n_fired (n,))."""
+        P, n = tp.shape[0], js.shape[0]
+        dv = np.zeros((n, 3))
+        retro = np.zeros(n)
+        nf = np.zeros(n, np.int64)
+        lr = math.log(opt / th)
+        for c in range(n):
+            j = js[c]
+            for p in range(P):
+                if not tp[p] < t1[c] - 1e-9:
+                    break
+                a, O, w, M = _elem_at(j, tp[p], a0, adot, raan0, raan_dot, argp0, argp_dot, M0, M_dot)
+                rx, ry, rz, vx, vy, vz = _rv(a, e[j], inc[j], O, w, M)
+                dx, dy, dz = rx - r_sat[p, 0], ry - r_sat[p, 1], rz - r_sat[p, 2]
+                R = math.sqrt(dx * dx + dy * dy + dz * dz)
+                phi = phi_k / (R * R)
+                if phi < th:
+                    continue
+                if not plasma:
+                    cm = cm0
+                elif phi <= opt:
+                    cm = cm0 * math.log(phi / th) / lr
+                else:
+                    cm = cm0 * (opt / phi) ** pexp
+                mag = eta1_cos * cm * phi / mu[c] / R
+                ddx, ddy, ddz = mag * dx, mag * dy, mag * dz
+                vn = math.sqrt(vx * vx + vy * vy + vz * vz)
+                dv[c, 0] += ddx
+                dv[c, 1] += ddy
+                dv[c, 2] += ddz
+                retro[c] -= (ddx * vx + ddy * vy + ddz * vz) / vn
+                nf[c] += 1
+        return dv, retro, nf
+
+
 def element_args(el, ballistic_coeff=None, epoch=None):
     """Flatten elements + J2/drag rates into the kernel argument tuple.
 

@@ -273,8 +273,9 @@ def run_engagements(
             planner.refresh(float(t[0]), pop, removed | decayed)
         # kernel element arguments for the whole population, shared by all platforms this chunk.
         # Objects engaged later in the chunk keep stale args, but they are excluded via ``engaged``.
+        # Also used for candidate prediction: engaged objects are excluded from both.
         elem_args = (_kernels.element_args(pop.elements, pop.ballistic_coeff, pop.epoch_s)
-                     if _kernels.HAVE_NUMBA and len(platforms) > 1 else None)
+                     if _kernels.HAVE_NUMBA else None)
         for p_idx, plat in enumerate(platforms):
             wins = screen_windows(plat, pop, t, candidates=np.flatnonzero(~(removed | decayed)), batch=batch,
                                   sun_hat=sun_hat, elem_args=elem_args)
@@ -293,7 +294,7 @@ def run_engagements(
                 rs = state[plat.name]
                 rs.advance(max(rs.t, t[k] + plat.atp.settle_s))
                 cands = evaluate_candidates(plat, pop, open_w, t, k, params, max_fire_s=rs.max_fire_s(),
-                                            pulse_stride=predict_pulse_stride)
+                                            pulse_stride=predict_pulse_stride, elem_args=elem_args)
                 is_commit = False
                 if planner is not None and cands:
                     mine = [c for c in cands if planner.is_committed(c.debris_index)]

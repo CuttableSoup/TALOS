@@ -95,6 +95,7 @@ def evaluate_candidates(
     max_fire_s: float | None = None,
     min_fired_frac: float = 0.1,
     pulse_stride: int = 1,
+    elem_args: tuple | None = None,
 ) -> list[Candidate]:
     """Deterministic burst predictions for windows open at grid index ``k``.
 
@@ -104,6 +105,8 @@ def evaluate_candidates(
     than ``min_burst_s`` are not considered.
     ``pulse_stride`` > 1 predicts every stride-th pulse and scales sums and counts by the
     stride (speed vs accuracy; the fired burst itself is always integrated per pulse).
+    ``elem_args``: ``_kernels.element_args`` of the whole population (current state of
+    every candidate) -> fused numba prediction instead of the numpy path.
     """
     las, res = platform.laser, platform.resources
     dt = t_grid[1] - t_grid[0] if len(t_grid) > 1 else 1.0
@@ -125,8 +128,23 @@ def evaluate_candidates(
     active = tp[:, None] < t1[None, :] - 1e-9
     r_s, _ = states_at(platform.orbit, tp)
     sub = population.elements[js]
-    r_d, v_d = states_at(sub, tp, population.ballistic_coeff[js], epoch=population.epoch_s[js])
-    pred = predict_bursts(r_s, r_d, v_d, active, las, population.areal_density[js], params)
+    if elem_args is not None and params.cm_model in ("plasma", "constant"):
+        from . import _kernels
+        from .engagement import BurstPrediction, fluence
+
+        th, opt = params.threshold_fluence, params.phi_opt
+        if params.cm_model == "plasma" and opt <= th:
+            raise ValueError("phi_opt must exceed threshold_fluence")
+        dvv, retro, nf = _kernels.predict_kernel(
+            np.ascontiguousarray(tp), np.ascontiguousarray(r_s), np.ascontiguousarray(t1, float),
+            np.ascontiguousarray(js, np.int64), float(fluence(1.0, las)), th, opt, params.cm,
+            params.cm_model == "plasma", params.plasma_exponent,
+            params.eta1_nominal * float(np.cos(params.off_axis_mean_rad)),
+            np.ascontiguousarray(population.areal_density[js], float), *elem_args)
+        pred = BurstPrediction(dvv, retro, nf, nf * las.pulse_energy_j)
+    else:
+        r_d, v_d = states_at(sub, tp, population.ballistic_coeff[js], epoch=population.epoch_s[js])
+        pred = predict_bursts(r_s, r_d, v_d, active, las, population.areal_density[js], params)
     if pulse_stride > 1:
         m = int(pulse_stride)
         pred = type(pred)(pred.dv_vec * m, pred.dv_retrograde * m, pred.n_fired * m, pred.optical_energy_j * m)
