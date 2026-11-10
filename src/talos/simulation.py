@@ -86,6 +86,10 @@ class SimResult:
     shell_res_final_s: np.ndarray | None = field(default=None, repr=False)
     # summed natural-path shell residence [s] of every fragment shed by ablation (new risk)
     shell_res_fragments_s: np.ndarray | None = field(default=None, repr=False)
+    # fresh-platform restart (resume with fresh_platforms): the run covers [t_start_s, duration_s]
+    # and counts only removals after it; objects removed before are flagged here
+    t_start_s: float = 0.0
+    removed_at_start: np.ndarray | None = field(default=None, repr=False)
 
     def records(self) -> list[dict]:
         return [asdict(e) for e in self.events]
@@ -101,19 +105,23 @@ class SimResult:
         ``debris_years_removed`` sums lifetime reduction, capped at ``horizon_s``.
         """
         li, lf = self.lifetime_initial_s, self.lifetime_final_s
-        credited = [j for j in np.flatnonzero(self.removed) if li.get(int(j), 0.0) > credit_min_lifetime_s]
+        rem = self.removed.copy()
+        if self.removed_at_start is not None:
+            rem[:len(self.removed_at_start)] &= ~self.removed_at_start
+        span = self.duration_s - self.t_start_s
+        credited = [j for j in np.flatnonzero(rem) if li.get(int(j), 0.0) > credit_min_lifetime_s]
         dyears = sum(min(li[j], horizon_s) - min(lf[j], horizon_s) for j in li) / YEAR
         useful = [e for e in self.events if e.n_fired > 0 and e.dv_retrograde > 0]
-        hours = self.duration_s / 3600.0
+        hours = span / 3600.0
         risk = {}
         for k, name in enumerate(self.shell_names):
             nat = float(self.shell_res_initial_s[:, k].sum()) / YEAR
             aft = float(self.shell_res_final_s[:, k].sum()) / YEAR
             risk |= {f"risk_{name}_obj_yr_natural": nat, f"risk_{name}_obj_yr_after": aft,
-                     f"risk_{name}_delta_obj_yr_per_yr": (aft - nat) * YEAR / self.duration_s}
+                     f"risk_{name}_delta_obj_yr_per_yr": (aft - nat) * YEAR / span}
             if self.shell_res_fragments_s is not None:
                 risk[f"risk_{name}_obj_yr_fragments"] = float(self.shell_res_fragments_s[k]) / YEAR
-        duty = float(np.mean(list(self.fire_time_s.values()))) / self.duration_s
+        duty = float(np.mean(list(self.fire_time_s.values()))) / span
         return {
             "sim_hours": hours,
             "n_platforms": len(self.platforms),
@@ -123,12 +131,12 @@ class SimResult:
             "mean_dv_retro_per_engagement": float(np.mean([e.dv_retrograde for e in useful])) if useful else 0.0,
             "duty_cycle_mean": duty,
             "saturation": duty / self.max_duty,
-            "removed": int(self.removed.sum()),
-            "removed_per_yr": float(self.removed.sum()) * YEAR / self.duration_s,
+            "removed": int(rem.sum()),
+            "removed_per_yr": float(rem.sum()) * YEAR / span,
             "removed_credited": len(credited),
-            "removed_credited_per_yr": len(credited) * YEAR / self.duration_s,
+            "removed_credited_per_yr": len(credited) * YEAR / span,
             "debris_years_removed": dyears,
-            "debris_years_removed_per_yr": dyears * YEAR / self.duration_s,
+            "debris_years_removed_per_yr": dyears * YEAR / span,
             **self.env_stats,
             **self.pop_stats,
             **risk,
@@ -235,27 +243,48 @@ def run_engagements(
     res_sim = np.zeros((len(pop), len(names)))  # shell residence during the run [s]
     res_t = 0.0  # residence accumulated up to this sim time
     c_start = 0.0
+    fresh = resume is not None and bool(resume.get("fresh_platforms", False))
+    ref = None  # fresh restart: population state at the restart, the baseline for lifetimes / risk
+    removed_at_start = None
+    dyn_stats0: dict = {}
     if resume is not None:
         r = resume
-        if r["chunk_s"] != chunk_s or r["dt"] != dt or r["platforms"] != [p.name for p in platforms]:
-            raise ValueError("checkpoint was written with a different chunk_s / dt / constellation")
+        if r["chunk_s"] != chunk_s or r["dt"] != dt:
+            raise ValueError("checkpoint was written with a different chunk_s / dt")
+        if not fresh and r["platforms"] != [p.name for p in platforms]:
+            raise ValueError("checkpoint was written with a different constellation")
         pop, pop0, removed, decayed, touched = r["pop"], r["pop0"], r["removed"], r["decayed"], r["touched"]
-        n_initial, ready_at, fire_time, events = r["n_initial"], r["ready_at"], r["fire_time"], r["events"]
-        res_sim, res_t, c_start = r["res_sim"], r["res_t"], r["c0"]
+        c_start = r["c0"]
         pending, frag_stats = r.get("pending", []), r.get("frag_stats", frag_stats)
         frag_idx = list(r.get("frag_idx", []))
-        if knowledge is not None and r.get("knowledge") is not None:
-            knowledge.__dict__.update(r["knowledge"])
-        for p in platforms:  # resource states; the illumination timeline is rebuilt for this duration
-            st = r["state"][p.name]
-            st.env = state[p.name].env
-            state[p.name] = st
+        if fresh:
+            # new hardware over the same sky: platforms, resources and tallies start at the
+            # restart; the population (and its dynamics / generators) continue
+            pop.cm_scale = np.asarray(params.cm_scale_for(pop.material), float)  # this run's coupling
+            removed_at_start = removed.copy()
+            n_initial = int((~(removed | decayed)).sum())
+            ref = copy.deepcopy(pop)
+            res_sim, res_t = np.zeros((len(pop), len(names))), c_start
+            for st in state.values():
+                st.t = c_start
+            frag_stats = {k: 0 for k in frag_stats}
+            frag_idx = []
+        else:
+            n_initial, ready_at, fire_time, events = r["n_initial"], r["ready_at"], r["fire_time"], r["events"]
+            res_sim, res_t = r["res_sim"], r["res_t"]
+            if knowledge is not None and r.get("knowledge") is not None:
+                knowledge.__dict__.update(r["knowledge"])
+            for p in platforms:  # resource states; the illumination timeline is rebuilt for this duration
+                st = r["state"][p.name]
+                st.env = state[p.name].env
+                state[p.name] = st
         if rng is not None:
             rng.bit_generator.state = r["rng"]
         if dynamics is not None:
-            dynamics.next_update, dynamics.stats = r["dynamics"]["next_update"], r["dynamics"]["stats"]
+            dynamics.next_update, dynamics.stats = r["dynamics"]["next_update"], dict(r["dynamics"]["stats"])
             dynamics.rng.bit_generator.state = r["dynamics"]["rng"]
-        if planner is not None:
+            dyn_stats0 = dict(dynamics.stats) if fresh else {}
+        if planner is not None and not fresh:
             planner.__dict__.update(r["planner"])
             planner.env = env
     next_ckpt = (c_start // checkpoint_every_s + 1) * checkpoint_every_s if checkpoint_every_s else np.inf
@@ -451,10 +480,11 @@ def run_engagements(
     li, lf = {}, {}
     res_i = res_f = np.zeros((len(hit), len(names)))
     if len(hit):
-        # both lifetimes measured from each object's initial epoch
-        e0, e1 = pop0.elements[hit], pop.elements[hit]
+        # both lifetimes measured from each object's initial epoch (fresh restart: its state then)
+        base = pop0 if ref is None else ref.append(pop0.subset(np.arange(len(ref), len(pop0))))
+        e0, e1 = base.elements[hit], pop.elements[hit]
         B = pop.ballistic_coeff[hit]
-        t0, t1 = pop0.epoch_s[hit], pop.epoch_s[hit]
+        t0, t1 = base.epoch_s[hit], pop.epoch_s[hit]
         L0 = orbital_lifetime(e0.a, e0.e, B, t0_s=t0, shells_m=shells)
         L1 = orbital_lifetime(e1.a, e1.e, B, t0_s=t1, shells_m=shells)
         if shells is not None:
@@ -465,7 +495,8 @@ def run_engagements(
     sts = list(state.values())
     for s in sts:
         s.advance(max(s.t, duration_s))
-    yr = YEAR / duration_s
+    span = duration_s - (c_start if fresh else 0.0)
+    yr = YEAR / span
     shots = {p: 0 for p in fire_time}
     for e in events:
         shots[e.platform] += e.n_pulses
@@ -477,30 +508,32 @@ def run_engagements(
         "battery_dod_mean": float(sum(s.burst_dod_sum for s in sts) / max(1, sum(s.bursts for s in sts))),
         "battery_dod_max": float(max(s.burst_dod_max for s in sts)),
         # storage end of life (damage = 1) at this run's cycling, worst platform
-        "storage_life_yr": float(min((duration_s / YEAR) / s.storage_damage if s.storage_damage > 0 else np.inf
+        "storage_life_yr": float(min((span / YEAR) / s.storage_damage if s.storage_damage > 0 else np.inf
                                      for s in sts)),
         "ready_burst_s": float(np.mean(list(ready_s.values()))),
     }
     if env is not None:
         env_stats |= {
             "eclipse_fraction": float(np.mean([s.env.eclipse_fraction for s in sts])),
-            "heater_kwh_per_day": float(np.mean([s.heater_j for s in sts])) / 3.6e6 * 86400.0 / duration_s,
+            "heater_kwh_per_day": float(np.mean([s.heater_j for s in sts])) / 3.6e6 * 86400.0 / span,
             "brownout_s": float(np.mean([s.brownout_s for s in sts])),
         }
     pop_stats = dict(frag_stats) if params.fragment_prob_per_burst > 0 else {}
     if dynamics is not None:
         live = int((~(removed | decayed)).sum())
+        dstats = {k: v - dyn_stats0.get(k, 0) for k, v in dynamics.stats.items()}
         pop_stats = {
             **pop_stats,
-            **dynamics.stats,
+            **dstats,
             "pop_initial": n_initial,
             "pop_final_live": live,
-            "net_change_per_yr": (live - n_initial) * YEAR / duration_s,
-            "natural_decays_per_yr": dynamics.stats["natural_decays"] * YEAR / duration_s,
+            "net_change_per_yr": (live - n_initial) * YEAR / span,
+            "natural_decays_per_yr": dstats["natural_decays"] * YEAR / span,
         }
     return SimResult(events, duration_s, [p.name for p in platforms], fire_time, removed, max_duty, pop, li, lf,
                      dict(planner.stats, committed_now=len(planner.committed)) if planner is not None else {},
-                     env_stats, pop_stats, names, res_i, res_f, res_frag)
+                     env_stats, pop_stats, names, res_i, res_f, res_frag,
+                     c_start if fresh else 0.0, removed_at_start)
 
 
 def load_checkpoint(path) -> dict:

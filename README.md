@@ -762,5 +762,34 @@ in month 3 and then fall; the platforms keep firing (~60k bursts/month throughou
   test the late, heavy-target regime; there, removals depend on Δv per burst against
   μ ≥ 2 objects (laser energy per burst, Cm), not on the score.
 
+## Hardware against the depleted sky (2026-11-10)
+`run_baseline.py 750 --resume runs/design_2yr/checkpoints/design.pkl --fresh-platforms
+--set ...` restarts new platforms over the day-720 population (37.5k live, light targets
+gone) for 30 days; tallies, lifetimes, debris-years and risk count from the restart
+(runs/late_hw). $/debris-yr = cost / (debris-yr removed per yr × mission life).
+| variant | removed (30 d) | debris-yr/yr | Δv/burst | duty | life (yr) | cost | $/debris-yr |
+|---|---|---|---|---|---|---|---|
+| control (design) | 81 | 338k | 1.85 | 9.0 % | 2.94 | $656M | 661 |
+| power2x (array 3,200 ft², radiator 120 m²) | 150 | 660k | 1.68 | 18.4 % | 1.39 | $912M | 995 |
+| prf2x (66 Hz, 50 kW, 4 kWh) | 95 | 343k | 2.91 | 4.4 % | 4.48 | $944M | 615 |
+| burst40 (40 s, 4 kWh) | 91 | 313k | 2.52 | 8.8 % | 4.25 | $805M | 606 |
+| sats8 | 149 | 702k | 1.76 | 9.0 % | 2.90 | $1,312M | 644 |
+Early mission for reference: $344/debris-yr (first 30 days), $518 over 2 years.
+- Energy-limited, as expected: average power (power2x, sats8) is the only lever on the
+  rate (~1.85× removals, ~2× debris-years). prf2x / burst40 deliver the same optical energy
+  per hour (bursts are storage-limited: 13.8 s at 50 kW), so the rate barely moves.
+- Storage cycle life is the binding life limit: power2x doubles the cycling and halves
+  the life, so per mission it removes no more than the control and is the most expensive.
+  prf2x / burst40 cycle less (fewer, deeper bursts), last ~4.3–4.5 yr and are the cheapest
+  per debris-year; sats8 scales cost and benefit together.
+- Per removal the late phase looks ruinous (credited removals: control $875k, 21 of 81
+  have > 1 yr natural lifetime left), but per debris-year it is only ~2× the early phase:
+  heavy objects carry long lifetimes. Debris-years, not removal count, is the measure for
+  sizing the late mission.
+- Lowering heavy objects from 700–900 km raises Starlink-shell risk in the high-rate
+  variants (+1,900–2,000 obj-yr/yr for power2x / sats8, +380 control, −760 prf2x); 30-day
+  counts are small, so treat the sign as noisy.
+
 ## Next step
+Storage cycle life is the late-mission limit: size storage for life (bigger / longer-lived bank, fewer cycles per joule) together with average power;
 Δv per burst against μ ≥ 2 targets (the late-mission limit: burst energy, Cm by material, revisit rate) and whether a mission should be sized to the light inventory (~2 yr); Latin-hypercube bands on the design including fragmentation 0–1 %, Cm ÷3 to ×2, thermal coupling; thermal coupling at 355 nm / 100 ps (melt bound); absolute pointing budget; detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.

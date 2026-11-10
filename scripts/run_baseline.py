@@ -8,6 +8,11 @@ Progress: runs/x/logs/<name>.log; events: runs/x/events/<name>.parquet;
 full-state checkpoints every run.checkpoint_days (30) in runs/x/checkpoints/<name>.pkl.
 Continue / extend: run_baseline.py 730 --out runs/y --resume runs/x/checkpoints/base.pkl
 (same --config/--set as the original run; only the duration may change).
+New hardware over a run's sky: --resume ck.pkl --fresh-platforms keeps only the population
+(objects, removals, dynamics, clock) and builds the platforms from --config/--set, which may
+change laser / atp / resources / constellation / ablation / cost and run.score. DAYS is still
+the absolute end (resume a day-720 checkpoint with 750 for 30 days); totals and rates cover
+the new span only.
 3D playback: --render-days 1 [--render-at first|last|both] writes runs/x/render/<name>_day<N>.html
 (open with: python -m http.server 8765 -d runs/x/render; see scripts/render_run.py).
 """
@@ -39,11 +44,13 @@ if __name__ == "__main__":  # required on Windows (spawned workers re-import thi
     ap.add_argument("--config", default=None)
     ap.add_argument("--set", nargs="*", default=[], dest="sets")
     ap.add_argument("--resume", default=None, help="checkpoint .pkl to continue (or extend) from")
+    ap.add_argument("--fresh-platforms", action="store_true",
+                    help="with --resume: keep only the population; new platforms from --config/--set")
     ap.add_argument("--render-days", type=float, default=0.0, help="write a 3D playback of this many days")
     ap.add_argument("--render-at", choices=("first", "last", "both"), default="first")
     a = ap.parse_args()
     cfg = RunConfig(a.name, config=a.config, overrides={"run.duration_days": a.days, **parse_set(a.sets)},
-                    resume=a.resume)
+                    resume=a.resume, fresh_platforms=a.fresh_platforms)
     df = run_sweep([cfg], out_dir=a.out, n_jobs=1, threads_per_job=a.threads)
     print(df.T.to_string())
     if a.render_days > 0:

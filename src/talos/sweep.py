@@ -39,6 +39,7 @@ class RunConfig:
     config: str | None = None  # TOML path; None -> config/baseline.toml
     overrides: Mapping[str, Any] = field(default_factory=dict)
     resume: str | None = None  # checkpoint to continue from (see run_scenario)
+    fresh_platforms: bool = False  # with resume: keep only the population, new platforms
 
     def scenario(self) -> Scenario:
         return load_scenario(self.config, {"run.name": self.name, **self.overrides})
@@ -95,7 +96,8 @@ def run_one(cfg: RunConfig, out_dir: str | os.PathLike | None = None) -> tuple[d
     if out_dir is not None and sc.run.checkpoint_s:
         (Path(out_dir) / "checkpoints").mkdir(parents=True, exist_ok=True)
         ckpt = Path(out_dir) / "checkpoints" / f"{cfg.name}.pkl"
-    res = run_scenario(sc, on_chunk=mon, checkpoint_path=ckpt, resume_path=cfg.resume)
+    res = run_scenario(sc, on_chunk=mon, checkpoint_path=ckpt, resume_path=cfg.resume,
+                       fresh_platforms=cfg.fresh_platforms)
     ev_c = [e for e in res.events if e.committed]
     row = {"name": cfg.name, "config": cfg.config or "baseline",
            **{f"ovr.{k}": (str(v) if isinstance(v, (tuple, list)) else v) for k, v in cfg.overrides.items()},

@@ -314,14 +314,29 @@ def build(sc: Scenario) -> Built:
 
 # scenario keys a resumed run may change relative to its checkpoint
 RESUME_MAY_DIFFER = ("run.name", "run.duration_s", "run.checkpoint_s")
+# ... and, with fresh_platforms, everything about the platforms (not the population, its
+# dynamics, the atmosphere / sun, the risk shells or the clock and generators)
+FRESH_MAY_DIFFER_SECTIONS = ("laser", "atp", "resources", "constellation", "cost", "knowledge", "planner",
+                             "ablation")
+FRESH_MAY_DIFFER = ("run.score", "run.stochastic", "run.predict_pulse_stride")
 
 
-def run_scenario(sc: Scenario, on_chunk=None, checkpoint_path=None, resume_path=None):
+def _may_differ(key: str, fresh: bool) -> bool:
+    if key in RESUME_MAY_DIFFER:
+        return True
+    return fresh and (key in FRESH_MAY_DIFFER or key.split(".")[0] in FRESH_MAY_DIFFER_SECTIONS)
+
+
+def run_scenario(sc: Scenario, on_chunk=None, checkpoint_path=None, resume_path=None,
+                 fresh_platforms: bool = False):
     """Install the scenario atmosphere, build, run, restore the previous atmosphere.
 
     ``checkpoint_path``: write full-state checkpoints there every ``run.checkpoint_s``.
     ``resume_path``: continue from such a checkpoint. The scenario must match the one that
-    wrote it apart from RESUME_MAY_DIFFER (e.g. extend a 1-yr run to 2 yr)."""
+    wrote it apart from RESUME_MAY_DIFFER (e.g. extend a 1-yr run to 2 yr).
+    ``fresh_platforms``: continue only the population from the checkpoint, with new
+    platforms built from this scenario (laser / ATP / resources / constellation / ablation may
+    differ); tallies and rates cover [checkpoint time, run.duration_s] only."""
     from .propagator import get_atmosphere, set_atmosphere
     from .simulation import load_checkpoint, run_engagements
 
@@ -329,10 +344,18 @@ def run_scenario(sc: Scenario, on_chunk=None, checkpoint_path=None, resume_path=
     if resume_path is not None:
         resume = load_checkpoint(resume_path)
         old, new = resume["meta"].get("scenario", {}), scenario_dict(sc)
-        diff = sorted(k for k in set(old) | set(new) if k not in RESUME_MAY_DIFFER and old.get(k) != new.get(k))
+        diff = sorted(k for k in set(old) | set(new)
+                      if not _may_differ(k, fresh_platforms) and old.get(k) != new.get(k))
         if diff:
             raise ValueError(f"checkpoint {resume_path} was written by a different scenario: "
                              + ", ".join(f"{k}: {old.get(k)!r} -> {new.get(k)!r}" for k in diff))
+        if fresh_platforms:
+            if sc.run.duration_s <= resume["c0"]:
+                raise ValueError(f"run.duration_s ({sc.run.duration_s} s) must end after the checkpoint "
+                                 f"({resume['c0']} s): it is the absolute end time")
+            resume = {**resume, "fresh_platforms": True}
+    elif fresh_platforms:
+        raise ValueError("fresh_platforms needs resume_path")
     prev = get_atmosphere()
     set_atmosphere(make_atmosphere(sc))
     try:
