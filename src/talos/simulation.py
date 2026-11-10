@@ -146,6 +146,7 @@ def run_engagements(
     checkpoint_every_s: float | None = None,
     checkpoint_meta: dict | None = None,
     resume: dict | None = None,
+    predict_pulse_stride: int = 1,
 ) -> SimResult:
     """Run the engagement loop. With ``planner`` (a CommitPlanner), committed
     objects take priority and fillers that would block a reservation are skipped.
@@ -291,7 +292,8 @@ def run_engagements(
                     continue
                 rs = state[plat.name]
                 rs.advance(max(rs.t, t[k] + plat.atp.settle_s))
-                cands = evaluate_candidates(plat, pop, open_w, t, k, params, max_fire_s=rs.max_fire_s())
+                cands = evaluate_candidates(plat, pop, open_w, t, k, params, max_fire_s=rs.max_fire_s(),
+                                            pulse_stride=predict_pulse_stride)
                 is_commit = False
                 if planner is not None and cands:
                     mine = [c for c in cands if planner.is_committed(c.debris_index)]

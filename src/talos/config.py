@@ -43,6 +43,7 @@ class RunSettings:
     dt_s: float = 1.0
     chunk_s: float = 600.0
     checkpoint_s: float | None = 30 * 86400.0  # full-state checkpoint interval (sweep/out_dir runs)
+    predict_pulse_stride: int = 1  # scheduler predicts every n-th pulse (1 = exact)
 
 
 @dataclass(frozen=True)
@@ -312,6 +313,7 @@ def run_scenario(sc: Scenario, on_chunk=None, checkpoint_path=None, resume_path=
                                planner=b.planner, env=b.env, dynamics=b.dynamics,
                                on_chunk=on_chunk, risk_shells=sc.risk.shells(),
                                checkpoint_path=checkpoint_path, checkpoint_every_s=sc.run.checkpoint_s,
-                               checkpoint_meta={"scenario": scenario_dict(sc)}, resume=resume)
+                               checkpoint_meta={"scenario": scenario_dict(sc)}, resume=resume,
+                               predict_pulse_stride=sc.run.predict_pulse_stride)
     finally:
         set_atmosphere(prev)

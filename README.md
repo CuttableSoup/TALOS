@@ -106,6 +106,14 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 - What remains is serial Python scheduling (candidate evaluation, burst
   integration, resource state machine): a run at 8 threads is as fast as at 32.
   Sweeps should use `n_jobs = 4, threads_per_job = 8` (4 runs for the price of one).
+- Checkpoints: runs with an out_dir write `checkpoints/<name>.pkl` (full state,
+  ~15 MB + events) every `run.checkpoint_days` (30). `run_baseline.py DAYS --resume
+  <pkl>` continues or extends a run (same config; only name / duration may
+  differ) and reproduces the uninterrupted run exactly. Year 2 or a longer
+  horizon no longer re-runs year 1.
+- `run.predict_pulse_stride` (scheduler predicts every n-th pulse) tested at 5
+  and 10: 3-day baseline 58 → 50 s, Δv/engagement 5.84 → 6.10 / 6.16 m/s vs a
+  seed-to-seed spread of 5.84 / 6.05. Not worth the possible bias; default 1.
 - GPU not used: the dev box has an AMD RX 6950 XT on Windows — no CUDA, no
   CuPy-ROCm on Windows, DirectML lacks usable float64. The CPU path is now
   dominated by Python-level scheduling rather than array math, so a GPU would

@@ -94,6 +94,7 @@ def evaluate_candidates(
     params: AblationParams,
     max_fire_s: float | None = None,
     min_fired_frac: float = 0.1,
+    pulse_stride: int = 1,
 ) -> list[Candidate]:
     """Deterministic burst predictions for windows open at grid index ``k``.
 
@@ -101,6 +102,8 @@ def evaluate_candidates(
     min(burst_s, ``max_fire_s``), truncated where the window closes. A window
     still open at the end of the grid is allowed to run past it. Bursts shorter
     than ``min_burst_s`` are not considered.
+    ``pulse_stride`` > 1 predicts every stride-th pulse and scales sums and counts by the
+    stride (speed vs accuracy; the fired burst itself is always integrated per pulse).
     """
     las, res = platform.laser, platform.resources
     dt = t_grid[1] - t_grid[0] if len(t_grid) > 1 else 1.0
@@ -118,12 +121,15 @@ def evaluate_candidates(
         return []
     js, t1 = js[ok], t1[ok]
 
-    tp = pulse_times(t0, f_max, las.prf_hz)
+    tp = pulse_times(t0, f_max, las.prf_hz)[::max(1, int(pulse_stride))]
     active = tp[:, None] < t1[None, :] - 1e-9
     r_s, _ = states_at(platform.orbit, tp)
     sub = population.elements[js]
     r_d, v_d = states_at(sub, tp, population.ballistic_coeff[js], epoch=population.epoch_s[js])
     pred = predict_bursts(r_s, r_d, v_d, active, las, population.areal_density[js], params)
+    if pulse_stride > 1:
+        m = int(pulse_stride)
+        pred = type(pred)(pred.dv_vec * m, pred.dv_retrograde * m, pred.n_fired * m, pred.optical_energy_j * m)
     need = dv_to_remove(sub.a, sub.e)
 
     keep = (pred.n_fired >= min_fired) & (pred.dv_retrograde > 0)
