@@ -36,9 +36,14 @@ alt_km = [600.0, 1000.0]
 areal_density = 1.0            # kg/m^2, used when areal_density_model = "fixed" (sweep 0.2, 1, 10)
 areal_density_model = "sbm"    # [sourced] NASA std breakup model A/m (mu = 1/(A/m); median ~2 kg/m^2 at 1 cm,
                                # ~10 above 5.6 cm), NaK droplets as spheres | fixed | sphere (2/3 rho d); ordem only
+                               # alternatives (ordem only): "hanada" = Hanada two-material A/m mixture
+                               # (Olivieri & Francesconi, SDC9 paper 161, Eqs. 10-15; much lighter low-density
+                               # class), "hanada_material" = the same curves assigned by the ORDEM LD class
 min_lifetime_yr = 1.0          # drop objects that re-enter within a year anyway
 albedo_median = 0.1            # [pick] Lambertian geometric albedo (debris ~0.1-0.2)
 albedo_log_sigma = 0.5         # [pick] lognormal spread per object, clipped 0.02-0.6
+albedo_model = "fixed"         # fixed (albedo_median) | proof: [sourced] PROOF/MASTER medians, fragments 0.2,
+                               # NaK 0.85 (MLI 0.56, not separable in ORDEM) via Filho et al., SDC9 paper 14
 
 [planner]
 enabled = false                # receding-horizon commitment planner (did not beat greedy)
@@ -133,7 +138,8 @@ attitude_model = "per_pulse"   # [pick] per_pulse | per_burst (slow tumble: eta1
 # metal (SPIE 13699, 1064/532/355 nm, ns) -> ld > md; no ps / UV data per class.
 cm_scale_nk = 1.0              # NaK droplets (liquid metal spheres): unknown
 cm_scale_ld = 1.0              # low density (< 2 g/cm3: plastics, MLI, composites)
-cm_scale_md = 1.0              # medium density (aluminium)
+cm_scale_md = 1.0              # medium density (aluminium); Al 10-40 uN/W "under optimum irradiation" (Scholl, SDC9 paper
+                               # 307, citing Phipps 2011; ns / IR) vs 50 nominal: 0.2-0.8 if UV / ps behaves alike
 cm_scale_hd = 1.0              # high density (steel, copper)
 cm_scale_in = 1.0              # intact objects
 fragment_prob_per_burst = 0.0  # [guess] probability a burst fragments the target (0 = off). No published

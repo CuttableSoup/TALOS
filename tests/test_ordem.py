@@ -155,3 +155,50 @@ def test_toy_population_honours_sbm():
                                            "constellation.n_sats": 1})).population
     np.testing.assert_array_equal(pop.diameter_m, fixed.diameter_m)  # same toy draws, only mu differs
     assert np.all(fixed.areal_density == 1.0)
+
+
+def test_hanada_mixture_matches_olivieri_eqs(rng):
+    from talos.population import hanada_area_to_mass, hanada_log_am_params
+
+    a, mh, sh, ml, sl = hanada_log_am_params(np.array([0.01, 0.2]))
+    # lambda = -2: alpha = 1 + 0.888 * 0.71 * -0.99; outside [-2.71, -1.01] high density only
+    np.testing.assert_allclose(a, [1 + 0.888 * 0.71 * -0.99, 1.0])
+    np.testing.assert_allclose([mh[0], sh[0], ml[0], sl[0]], [-0.264, 0.249, 0.344, 0.0762])
+    x = np.log10(hanada_area_to_mass(np.full(50000, 0.01), rng))
+    from math import erf, sqrt
+
+    light = x > 0.1  # the low-density peak sits at +0.34 with sigma 0.08
+    tail = lambda m, s: 0.5 * (1 - erf((0.1 - m) / (s * sqrt(2))))  # noqa: E731
+    assert np.mean(light) == pytest.approx(a[0] * tail(mh[0], sh[0]) + (1 - a[0]) * tail(ml[0], sl[0]), abs=0.01)
+    assert np.mean(x[light]) == pytest.approx(0.344, abs=0.01)
+    y = np.log10(hanada_area_to_mass(np.full(50000, 0.2), rng))  # outside the fit: high density only
+    assert np.mean(y) == pytest.approx(mh[1], abs=0.01) and np.std(y) == pytest.approx(sh[1], rel=0.03)
+
+
+def test_hanada_and_proof_albedo_wiring(tmp_path, monkeypatch):
+    monkeypatch.setattr(ordem, "DATA_DIR", tmp_path)
+    _table(2026).save()
+    base = {"population.kind": "ordem", "population.n_samples": 4000, "population.min_lifetime_yr": None,
+            "constellation.n_sats": 1}
+    sbm = build(load_scenario(overrides={**base, "population.areal_density_model": "sbm"})).population
+    han = build(load_scenario(overrides={**base, "population.areal_density_model": "hanada",
+                                         "population.albedo_model": "proof"})).population
+    np.testing.assert_array_equal(sbm.diameter_m, han.diameter_m)
+    nak = np.isclose(han.areal_density, 2 / 3 * 870.0 * han.diameter_m)
+    assert np.median(han.areal_density[~nak]) < np.median(sbm.areal_density[~nak])
+    assert np.median(han.albedo[nak]) == pytest.approx(0.85, rel=0.1)
+    assert np.median(han.albedo[~nak]) == pytest.approx(0.2, rel=0.1)
+    with pytest.raises(ValueError, match="albedo_model"):
+        build(load_scenario(overrides={"population.kind": "toy", "population.n_real": 100,
+                                       "population.albedo_model": "proof", "constellation.n_sats": 1}))
+
+
+def test_hanada_material_uses_the_ordem_class(rng):
+    from talos.population import hanada_area_to_mass, hanada_log_am_params
+
+    d = np.full(20000, 0.01)
+    ld = np.arange(20000) < 5000
+    x = np.log10(hanada_area_to_mass(d, rng, low_density=ld))
+    _, mh, sh, ml, sl = hanada_log_am_params(0.01)
+    assert np.mean(x[ld]) == pytest.approx(ml, abs=0.01) and np.std(x[ld]) == pytest.approx(sl, rel=0.05)
+    assert np.mean(x[~ld]) == pytest.approx(mh, abs=0.01) and np.std(x[~ld]) == pytest.approx(sh, rel=0.05)

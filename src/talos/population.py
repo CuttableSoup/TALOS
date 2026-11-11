@@ -82,6 +82,44 @@ def sbm_area_to_mass(diameter_m, rng: np.random.Generator, clip_sigma: float = 3
     return 10.0 ** (mean + sigma * z)
 
 
+def hanada_log_am_params(diameter_m):
+    """Hanada et al. two-material A/m model as given by Olivieri & Francesconi (SDC9 paper 161,
+    Eqs. 10-15, with their corrected alpha): log10(A/m) ~ alpha N(mu_H, sigma_H) +
+    (1 - alpha) N(mu_L, sigma_L) for lambda = log10(L_c) in [-2.71, -1.01] (1.9 mm - 9.8 cm),
+    high density (H) only outside. Fit to satellite mock-up impact tests (Hanada 2009); the
+    low-density class (CFRP, plastics) is light and narrow (~2.2 m^2/kg at 1 cm).
+    Returns (alpha, mu_H, sigma_H, mu_L, sigma_L).
+    """
+    lam = np.log10(np.asarray(diameter_m, float))
+    inside = (lam >= -2.71) & (lam <= -1.01)
+    alpha = np.where(inside, np.clip(1.0 + 0.888 * (lam + 2.71) * (lam + 1.01), 0.0, 1.0), 1.0)
+    return alpha, -0.7 - 0.218 * lam, 0.685 + 0.218 * lam, 0.554 + 0.105 * lam, 0.106 + 0.0149 * lam
+
+
+def hanada_area_to_mass(diameter_m, rng: np.random.Generator, clip_sigma: float = 3.0,
+                        low_density=None) -> np.ndarray:
+    """A/m [m^2/kg] per fragment from the Hanada model (tails clipped at +-3 sigma).
+
+    ``low_density`` None: each fragment picks its component with the published weight alpha
+    (material-blind). A boolean array instead assigns the component by material (True -> the
+    low-density distribution inside the fit range, high density outside it).
+    """
+    alpha, mh, sh, ml, sl = hanada_log_am_params(diameter_m)
+    u = rng.random(np.shape(alpha))
+    if low_density is None:
+        heavy = u < alpha
+    else:
+        heavy = ~(np.asarray(low_density, bool) & (alpha < 1.0))
+    z = np.clip(rng.standard_normal(np.shape(alpha)), -clip_sigma, clip_sigma)
+    return 10.0 ** np.where(heavy, mh + sh * z, ml + sl * z)
+
+
+# PROOF (ESA MASTER) albedo assumptions, quoted by Filho et al., SDC9 paper 14: fragments 0.2,
+# MLI 0.56, NaK droplets 0.85. ORDEM classes do not separate MLI, so only NaK differs.
+PROOF_ALBEDO = {"NK": 0.85}
+PROOF_ALBEDO_FRAGMENT = 0.2
+
+
 def ordem_population(
     n: int,
     rng: np.random.Generator,
@@ -94,6 +132,7 @@ def ordem_population(
     albedo_median: float = 0.1,
     albedo_log_sigma: float = 0.5,
     epoch_s: float = 0.0,
+    albedo_model: str = "fixed",
 ) -> DebrisPopulation:
     """1-10 cm population drawn from an ORDEM table (talos.ordem.OrdemTable).
 
@@ -106,7 +145,12 @@ def ordem_population(
     uses a solid sphere of the ORDEM material density, mu = (2/3) rho d [pick; real
     fragments are flatter, i.e. lower mu]; "sbm" draws fragments' A/m from the NASA
     standard breakup model (mu = 1/(A/m), ~2 kg/m^2 at 1 cm, ~10 kg/m^2 above 5.6 cm)
-    and keeps NaK droplets as spheres.
+    and keeps NaK droplets as spheres; "hanada" is the same with the Hanada two-material
+    A/m mixture (low-density fragments much lighter: see hanada_log_am_params);
+    "hanada_material" gives ORDEM's LD class the low-density curve and the rest the high-density one.
+
+    ``albedo_model``: "fixed" draws every object around ``albedo_median``; "proof" uses the
+    PROOF medians (fragments 0.2, NaK 0.85) with the same lognormal spread.
     """
     from .ordem import MATERIAL_DENSITY, sample_cells
 
@@ -130,11 +174,23 @@ def ordem_population(
         # fragments: NASA standard breakup model A/m; NaK droplets are solid spheres
         nak = np.asarray(table.materials)[s["material"]] == "NK"
         mu = np.where(nak, sphere, 1.0 / sbm_area_to_mass(s["diameter_m"], rng))
+    elif areal_density_model in ("hanada", "hanada_material"):
+        names = np.asarray(table.materials)[s["material"]]
+        ld = (names == "LD") if areal_density_model == "hanada_material" else None
+        mu = np.where(names == "NK", sphere, 1.0 / hanada_area_to_mass(s["diameter_m"], rng, low_density=ld))
     else:
-        raise ValueError(f"areal_density_model {areal_density_model!r}: expected fixed, sphere or sbm")
+        raise ValueError(f"areal_density_model {areal_density_model!r}: expected fixed, sphere, sbm, hanada or hanada_material")
     pop = DebrisPopulation(elements=el, diameter_m=s["diameter_m"], areal_density=mu,
                            weight=s["represented"] / n, epoch_s=epoch_s, material=s["material"])
-    pop.albedo = np.clip(albedo_median * np.exp(albedo_log_sigma * rng.standard_normal(n)), 0.02, 0.6)
+    z = rng.standard_normal(n)
+    if albedo_model == "fixed":
+        pop.albedo = np.clip(albedo_median * np.exp(albedo_log_sigma * z), 0.02, 0.6)
+    elif albedo_model == "proof":
+        names = np.asarray(table.materials)[s["material"]]
+        med = np.array([PROOF_ALBEDO.get(m, PROOF_ALBEDO_FRAGMENT) for m in names])
+        pop.albedo = np.clip(med * np.exp(albedo_log_sigma * z), 0.02, 0.95)
+    else:
+        raise ValueError(f"albedo_model {albedo_model!r}: expected fixed or proof")
     if min_lifetime_yr is not None:
         life = orbital_lifetime(el.a, el.e, pop.ballistic_coeff, max_s=2 * min_lifetime_yr * YEAR)
         pop = pop.subset(np.flatnonzero(life > min_lifetime_yr * YEAR))

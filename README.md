@@ -141,7 +141,7 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 | Fire threshold | `AblationParams.threshold_fluence` | 4.5 kJ/m² | **sourced** (research pass) |
 | φ_opt (Cm peak) | `AblationParams.phi_opt` | 8.5 kJ/m² | **sourced** |
 | Cm model | `AblationParams.cm_model` | plasma: log ramp, then ∝ φ^-1/4 | **sourced** falloff; ramp shape is a guess |
-| Cm peak | `AblationParams.cm` | 50 N/MW (sweep 25–100) | **sourced** range; only ~100 ps Al point is ≤30 N/MW, IR not UV |
+| Cm peak | `AblationParams.cm` | 50 N/MW (sweep 25–100) | **sourced** range; only ~100 ps Al point is ≤30 N/MW, IR not UV; Al 10–40 N/MW "under optimum irradiation" (SDC9 paper 307, ns) |
 | η₁ | `AblationParams.eta1_mean/kappa`, `eta1_basis` | Beta, mean 0.3, κ=10; `along_beam` | mean **sourced** (Phipps 2012 η_c = 0.3 after Liedahl); basis **sourced** (η_c covers improper thrust direction); spread a guess |
 | Δv off-axis angle | `AblationParams.off_axis_*` | N(45°, 15°) clipped [0, 90°] | centre **sourced**; spread a guess. With `along_beam` it sets only the sideways scatter (magnitude η₁/cos 45°) |
 | Debris count in band | `population.kind = "ordem"` | 75.9k 1–10 cm, 600–1000 km (ORDEM 3.2, 2026) | **sourced** (ORDEM); inclination mix is a fit to ORDEM flux spectra; toy: 100k (Phipps) |
@@ -163,7 +163,7 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 | Target lighting | `[atp] require_target_sunlit` | true (passive optical tracking) | pick |
 | Sun exclusion | `[atp] sun_exclusion_deg` | 30° | pick (30–45 typical, unsourced) |
 | Detection model | `[atp] detection_model` | passive_optical: Lambertian sphere magnitude, acquire ≤ 16 mag for 10 s, track ≤ 18 mag, +3 mag on sunlit-Earth background | all picks; research needed |
-| Debris albedo | `[population] albedo_median/log_sigma` | 0.1, lognormal σ=0.5 | pick (debris ~0.1–0.2) |
+| Debris albedo | `[population] albedo_median/log_sigma`, `albedo_model` | 0.1, lognormal σ=0.5 (`fixed`); `proof`: fragments 0.2, NaK 0.85 | fixed is a pick; `proof` **sourced** (PROOF/MASTER via SDC9 paper 14), off by default (+3 % debris-yr, see Sourcing pass 3) |
 | Atmosphere | `[atmosphere]` | NRLMSIS 2.1 global mean (Ap 15) vs F10.7; ESA SOLMAG monthly F10.7, observed then forecast (`activity = "table"`, `scripts/build_f107_table.py`) | density table derived from MSIS; F10.7 sourced (ESA forecast, Nov 2026). Lifetime vs references: TALOS/OSCAR 0.69–0.96, TALOS/DAS 0.77–1.57 (`scripts/validate_lifetime_oscar.py`) |
 | Background source | `[dynamics] source_mode` | `replace_decays`: each natural decay of a never-engaged object is replaced by an identical object (fresh phases), i.e. the un-lasered band is in steady state; `fraction` = `background_frac_per_yr` (2 %/yr) | assumption (ORDEM forecasts growth, not modelled) |
 | Protected shells | `[risk] shell_*_km` | crewed 370–430 km, Starlink 530–575 km | pick |
@@ -323,7 +323,7 @@ Worth adding:
     duplicate shots.
 
 Validation still owed: gate 2 (Pieters & Noomen reproduction), gate 5
-(orekit / STELA). MASTER also needs ESA SDUP registration.
+(orekit / STELA). MASTER 8.2.3 is installed; the population cross-check is still owed.
 
 ## ORDEM population (2026-11)
 `talos.ordem` runs ORDEM 3.2 spacecraft mode for circular orbits (600–1000 km
@@ -889,7 +889,63 @@ test (`talos.campaign`, `[campaign]`, off by default; `python scripts/large_debr
   objects are the lightest of the set so far (μ ≤ 20 of a median 17), and the heavy tail
   (μ ≥ 50, NaK droplets) is untouched.
 
+## Sourcing pass 3: SDC9 / NEOSST2 proceedings (2026-11-11)
+The local proceedings (`research/`, gitignored: ESA SDC9 2025, 232 papers; NEOSST2 2023, 98)
+read for inputs. About a dozen bear on TALOS; four gave something usable:
+- **A/m of small fragments** (Olivieri & Francesconi, SDC9 paper 161). NASA SBM's < 8 cm A/m
+  rests on SOCIT tests alone and fits only some events (COSMOS 2251, one picosat test).
+  Glancing impacts (IRIDIUM 33, PICOSAT-02) shift A/m higher, i.e. lighter fragments. The
+  paper quotes Hanada's two-material model (Eqs. 10–15): log10(A/m) = α·N(−0.7 − 0.218λ,
+  0.685 + 0.218λ) + (1 − α)·N(0.554 + 0.105λ, 0.106 + 0.0149λ), α = 1 + 0.888(λ + 2.71)(λ + 1.01),
+  for λ = log10 Lc in [−2.71, −1.01]. It fits IRIDIUM 33, but its mock-ups were CFRP plates
+  (representativeness questioned). DebriSat (Cowardin, SDC9 paper 8): CFRP is most fragments below ~12 mm
+  in a modern satellite, and the SSBM is being revised for "larger numbers of small,
+  low-density fragments". New `areal_density_model = "hanada"` (published α, material-blind)
+  and `"hanada_material"` (ORDEM's LD class gets the low-density curve). Population median μ:
+  SBM 4.7, hanada_material 3.0, hanada 2.2 kg/m² (μ < 1: 10 / 11 / 37 %); the 1-yr lifetime
+  filter drops 9 % more objects under `hanada` (65.8k vs 72.4k at the start of the runs below).
+- **Albedo** (Filho et al., SDC9 paper 14, quoting ESA PROOF): fragments 0.2, MLI 0.56, NaK
+  0.85; mean debris 0.175. New `albedo_model = "proof"` (MLI is not an ORDEM class).
+- **Cm of aluminium** (Scholl & Dekorsy, SDC9 paper 307): "10–40 µN/W under optimum irradiation"
+  for a wide range of lasers (Phipps 2011; ns pulses), 25 assumed. Same range as Keil 2023
+  (Sourcing pass 2); still no ps / UV point. Aluminium is ORDEM's MD class, 57 % of the band.
+- **Laser mass check** (same paper): the flight ALADIN laser (Aeolus, 355 nm, 20 ns, 50.5 Hz,
+  65 mJ ≈ 3.3 W UV) weighed 54 kg with electronics. TALOS's 28 kW at 20 kg/kW is ~8,500× the
+  UV power of anything flown; the laser mass pick has no flight anchor.
+
+No usable value: laser ranging (Hampf, Janota, Sauer: decimetre ranging of metre-class
+objects with ground stations, not 1–10 cm debris), Scharring (relay re-focusing concept; 400 J,
+100 Hz Yb:YAG slabs exist on the ground), tumbling and detumbling (De Maria, Lagadec: large
+intacts), environment (Stevenson, Manis, Rossi). `[knowledge]` and breakup rates stay picks.
+
+30 days, `config/design_mc.toml`, early sky (fresh start), seed 0, one lever each
+(runs/sourcing3_30d):
+| variant | eng/hr/sat | Δv/eng | removed | debris-yr/yr | collisions avoided/yr | $/debris-yr (0.5M) |
+|---|---|---|---|---|---|---|
+| control (SBM, albedo 0.1) | 20.3 | 14.7 | 2,970 | 850k | 17.6 | 427 |
+| `hanada_material` | 20.4 | 16.7 | 3,546 | 863k | 18.1 | 425 |
+| `hanada` | 21.7 | 26.1 | 7,804 | 898k | 29.7 | 430 |
+| `albedo_model = "proof"` | 20.7 | 16.0 | 3,389 | 876k | 19.8 | 421 |
+| `cm_scale_md = 0.5` (Al at 25 N/MW) | 20.0 | 10.1 | 1,710 | 624k | 9.5 | 575 |
+- The removal count hinges on the μ model (×1.2 to ×2.6 over SBM), but cost per debris-year
+  does not (±1 %). The extra removals are light, short-lived objects, which add little
+  debris-years, and the run is energy-limited either way. Removals and collisions avoided are
+  not robust headline numbers; debris-years are.
+- Aluminium Cm is the input that moves the bottom line: at the sourced ns value (25 vs 50)
+  $/debris-yr rises 35 %. A ps / UV Cm measurement on aluminium is worth more than any μ refinement.
+- Brighter debris (PROOF albedo) helps a little (+3 % debris-yr: more targets pass the
+  16 mag acquisition gate). Kept off by default so earlier runs stay comparable; switch it on
+  with the next baseline change.
+- Defaults unchanged (`sbm`, albedo 0.1, Cm scale 1). One seed, early sky only (the late
+  sky comes from the SBM `design_2yr` checkpoint).
+
 ## Next step
-Whole-mission design sweep scored on cost per debris-year over the early sky and the day-720 sky (`--fresh-platforms`), average power × burst length × storage size, with the storage cycle rating at 0.5 M and 2.3 M;
-Storage cycle life is the late-mission limit: size storage for life (bigger / longer-lived bank, fewer cycles per joule) together with average power;
-Δv per burst against μ ≥ 2 targets (the late-mission limit: burst energy, Cm by material, revisit rate) and whether a mission should be sized to the light inventory (~2 yr); Latin-hypercube bands on the design including fragmentation 0–1 %, Cm ÷3 to ×2, thermal coupling; thermal coupling at 355 nm / 100 ps (melt bound); absolute pointing budget; detection & tracking refinements; solar-cycle forecast vs ODPO; MASTER cross-check.
+- Seeds on the leading designs (control, d027, d002, d007): every design result is one seed.
+- Whole-mission run of d027 (`config/design_mc.toml`, 2 years, checkpointed; overnight).
+- Aluminium Cm at 355 nm / 100 ps: the largest single sensitivity (Sourcing pass 3). Until
+  measured, carry `cm_scale_md` 0.5–1 as a band in the Latin hypercube along with fragmentation
+  0–1 %, thermal coupling (melt bound) and the μ model (`sbm` / `hanada_material` / `hanada`).
+- Storage sized for life (bigger / longer-lived bank) with average power; Δv per burst on
+  μ ≥ 2 targets; whether to size the mission to the light inventory (~2 yr).
+- Absolute pointing budget; detection & tracking refinements (PROOF albedo on by default);
+  ODPO vs ESA F10.7; MASTER population cross-check (MASTER 8.2.3 is installed).

@@ -63,12 +63,13 @@ class PopulationConfig:
     n_samples: int | None = None  # None -> full density (one sample per real object)
     ordem_year: int | None = None  # None -> the epoch's year
     materials: tuple[str, ...] | None = None  # ORDEM classes (NK LD MD HD IN); None -> all
-    areal_density_model: str = "fixed"  # fixed | sphere (ORDEM material density; ordem only)
+    areal_density_model: str = "fixed"  # fixed | sbm | sphere, hanada, hanada_material (ordem only)
     alt_km: tuple[float, float] = (600.0, 1000.0)
     areal_density: float = 1.0
     min_lifetime_yr: float | None = 1.0
     albedo_median: float = 0.1
     albedo_log_sigma: float = 0.5
+    albedo_model: str = "fixed"  # fixed (albedo_median) | proof (fragments 0.2, NaK 0.85; ordem only)
 
 
 @dataclass(frozen=True)
@@ -276,6 +277,8 @@ def build(sc: Scenario) -> Built:
         n = int(p.n_samples or p.n_real)
         if p.areal_density_model not in ("fixed", "sbm"):
             raise ValueError(f"toy population supports areal_density_model fixed|sbm, not {p.areal_density_model!r}")
+        if p.albedo_model != "fixed":
+            raise ValueError(f"toy population supports albedo_model fixed only, not {p.albedo_model!r}")
         mu_fn = None
         if p.areal_density_model == "sbm":  # separate stream so the toy's own draws are unchanged
             from .population import sbm_area_to_mass
@@ -293,7 +296,8 @@ def build(sc: Scenario) -> Built:
         p = replace(p, n_real=table.total(p.alt_km, p.materials))
         n = int(p.n_samples or round(p.n_real))
         kw = dict(alt_km=p.alt_km, areal_density=p.areal_density, areal_density_model=p.areal_density_model,
-                  materials=p.materials, albedo_median=p.albedo_median, albedo_log_sigma=p.albedo_log_sigma)
+                  materials=p.materials, albedo_median=p.albedo_median, albedo_log_sigma=p.albedo_log_sigma,
+                  albedo_model=p.albedo_model)
         pop = ordem_population(n, pop_rng, table, min_lifetime_yr=p.min_lifetime_yr, **kw)
 
         def source(k, rng, t, w):  # background objects: same distribution, at the run's sample weight
