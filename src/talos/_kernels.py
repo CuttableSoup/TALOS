@@ -322,11 +322,13 @@ if HAVE_NUMBA:
 if HAVE_NUMBA:
 
     @nb.njit(cache=True, inline="always")
-    def _f107(t_s, act_const, f_const, epoch_year, cmin, cmax, period, fmin, fmax):
-        """Atmosphere.f107 (constant or cosine solar cycle)."""
-        if act_const:
+    def _f107(t_s, mode, f_const, epoch_year, cmin, cmax, period, fmin, fmax, ty, tf):
+        """Atmosphere.f107: mode 0 cosine solar cycle, 1 constant, 2 table (ty, tf)."""
+        if mode == 1:
             return f_const
         year = epoch_year + t_s / YEAR_S
+        if mode == 2:
+            return np.interp(year, ty, tf)
         x = ((year - cmin) / period) % 1.0
         xr = (cmax - cmin) / period
         if x < xr:
@@ -351,7 +353,7 @@ if HAVE_NUMBA:
 
     @nb.njit(parallel=True, cache=True)
     def lifetime_kernel(a0, e0, B, t0, max_s, reentry_alt, step_frac, max_step, A, F, L,
-                        act_const, f_const, epoch_year, cmin, cmax, period, fmin, fmax, lo, hi):
+                        mode, f_const, epoch_year, cmin, cmax, period, fmin, fmax, ty, tf, lo, hi):
         """lifetime.orbital_lifetime with the MSIS table atmosphere, one object per thread:
         same RK2 step rule (``step_frac`` scale heights of perigee drop, clipped [1 s, max_step])
         and the same shell-residence rule (8 sub-step midpoints). Returns (life, residence)."""
@@ -374,7 +376,7 @@ if HAVE_NUMBA:
             frac = np.zeros(K)
             while True:
                 ti = t0[j] + t
-                f = _f107(ti, act_const, f_const, epoch_year, cmin, cmax, period, fmin, fmax)
+                f = _f107(ti, mode, f_const, epoch_year, cmin, cmax, period, fmin, fmax, ty, tf)
                 da, de = _rates1(a, e, Bj, f, A, F, L, 64)
                 drp = da * (1 - e) - a * de
                 hp = (a * (1 - e) - R_EARTH) / 1e3
@@ -393,7 +395,7 @@ if HAVE_NUMBA:
                         span = min(dt, max(max_s - t, 0.0))
                         for k in range(K):
                             res[j, k] += frac[k] / 8 * span
-                f2 = _f107(ti + dt, act_const, f_const, epoch_year, cmin, cmax, period, fmin, fmax)
+                f2 = _f107(ti + dt, mode, f_const, epoch_year, cmin, cmax, period, fmin, fmax, ty, tf)
                 da2, de2 = _rates1(a + da * dt, max(e + de * dt, 0.0), Bj, f2, A, F, L, 64)
                 a = a + 0.5 * (da + da2) * dt
                 e = max(e + 0.5 * (de + de2) * dt, 0.0)

@@ -114,9 +114,10 @@ def orbital_lifetime(
         sh = np.zeros((0, 2)) if shells_m is None else np.asarray(shells_m, float).reshape(-1, 2)
         life, res = _kernels.lifetime_kernel(
             *(np.ascontiguousarray(x.reshape(-1)) for x in (a, e, B, t0)), float(max_s), float(reentry_alt_m),
-            float(step_frac), float(max_step_s), atm._alt, atm._f, atm._lr, c.activity == "constant",
+            float(step_frac), float(max_step_s), atm._alt, atm._f, atm._lr,
+            {"cycle": 0, "constant": 1, "table": 2}[c.activity],
             float(c.f107_constant), float(atm.epoch_year), float(c.cycle_min_year), float(c.cycle_max_year),
-            float(c.cycle_period_yr), float(c.f107_min), float(c.f107_max),
+            float(c.cycle_period_yr), float(c.f107_min), float(c.f107_max), atm._ty, atm._tf,
             np.ascontiguousarray(sh[:, 0]), np.ascontiguousarray(sh[:, 1]))
         life = life.reshape(a.shape)
         if shells_m is not None:

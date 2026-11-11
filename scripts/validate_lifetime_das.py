@@ -2,7 +2,7 @@
 
 Same Cd (2.2) and A/m definition (cross-section / mass) in both; TALOS uses
 1 / areal_density. Differences come from the atmosphere (NRLMSIS 2.1 global-mean
-table + parametric cycle vs Jacchia-77 + ODPO F10.7 forecast), SRP and
+table + the default activity, ESA's F10.7 table, vs Jacchia-77 + ODPO F10.7 forecast), SRP and
 luni-solar terms (DAS only), and TALOS's orbit-averaged decay.
 
 usage: python scripts/validate_lifetime_das.py [--out runs/das_lifetime]

@@ -107,7 +107,7 @@ def test_shared_element_args_match_per_platform():
     assert tup(screen_windows(sat, pop, t, candidates=cand, cache=chunk_cache(pop))) == ref
 
 
-@pytest.mark.parametrize("activity", ["cycle", "constant"])
+@pytest.mark.parametrize("activity", ["cycle", "constant", "table"])
 def test_lifetime_kernel_matches_numpy(monkeypatch, activity):
     from talos.atmosphere import Atmosphere, AtmosphereConfig
     from talos.constants import R_EARTH, YEAR

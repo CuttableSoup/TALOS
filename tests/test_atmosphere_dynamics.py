@@ -38,12 +38,25 @@ def test_msis_table_brackets_static_model():
 
 
 def test_solar_cycle_shape():
-    atm = Atmosphere(AtmosphereConfig(), epoch_year=2019.96)
+    atm = Atmosphere(AtmosphereConfig(activity="cycle"), epoch_year=2019.96)
     yr = lambda y: (y - 2019.96) * YEAR
     assert atm.f107(yr(2019.96)) == pytest.approx(70.0)
     assert atm.f107(yr(2024.8)) == pytest.approx(155.0)
     assert atm.f107(yr(2030.96)) == pytest.approx(70.0, abs=0.5)
     assert atm.f107(yr(2027.0)) < atm.f107(yr(2026.0)) < atm.f107(yr(2025.0))
+
+
+def test_f107_table_follows_esa_series():
+    from talos.atmosphere import load_f107_table
+
+    ty, tf = load_f107_table()
+    atm = Atmosphere(AtmosphereConfig(activity="table"), epoch_year=2026.97)
+    t = (np.array([2026.97, 2028.3, 2031.0]) - 2026.97) * YEAR
+    np.testing.assert_allclose(atm.f107(t), np.interp([2026.97, 2028.3, 2031.0], ty, tf))
+    assert np.all((tf > 50) & (tf < 300)) and ty[-1] > 2100
+    # cycle-25 decline into the ~2031 minimum, then cycle 26 rising
+    f = atm.f107((np.array([2027.0, 2029.0, 2031.0, 2035.0]) - 2026.97) * YEAR)
+    assert f[0] > f[1] > f[2] < f[3]
 
 
 def test_lifetime_depends_on_start_in_cycle(msis):

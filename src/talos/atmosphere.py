@@ -5,9 +5,12 @@
   (src/talos/data/msis_density.npz, built by scripts/build_density_table.py),
   log-bilinear interpolation, log-linear extrapolation above 1500 km.
 
-Solar activity: ``constant`` F10.7, or ``cycle`` — a smoothed 11-yr cycle
+Solar activity: ``constant`` F10.7; ``cycle`` — a smoothed 11-yr cycle
 anchored on cycle 25 (minimum Dec 2019, maximum ~Oct 2024), cosine rise and
-fall between ``f107_min`` and ``f107_max``, repeating. F10.7A = F10.7 (the
+fall between ``f107_min`` and ``f107_max``, repeating; or ``table`` — a monthly
+series (``f107_table``, default src/talos/data/f107_esa.npz: ESA's observed +
+forecast fap_mon.dat via scripts/build_f107_table.py), linear in time, end
+values held. F10.7A = F10.7 (the
 table assumes the 81-day mean equals the daily value); Ap fixed in the table.
 
 The propagator and lifetime code call ``propagator.density(alt, t_s)``, which
@@ -27,18 +30,20 @@ import numpy as np
 from .constants import YEAR
 
 _TABLE = Path(__file__).resolve().parent / "data" / "msis_density.npz"
+_F107_TABLE = Path(__file__).resolve().parent / "data" / "f107_esa.npz"
 
 
 @dataclass(frozen=True)
 class AtmosphereConfig:
     model: str = "msis_table"  # msis_table | exponential
-    activity: str = "cycle"  # cycle | constant
+    activity: str = "table"  # table (ESA observed + forecast F10.7) | cycle | constant
     f107_constant: float = 130.0
     f107_min: float = 70.0  # smoothed cycle minimum (PICK)
     f107_max: float = 155.0  # smoothed cycle maximum (PICK; cycle 25 peak ~150-165)
     cycle_min_year: float = 2019.96  # cycle 25 minimum, Dec 2019
     cycle_max_year: float = 2024.8  # cycle 25 smoothed maximum, ~Oct 2024
     cycle_period_yr: float = 11.0
+    f107_table: str = ""  # activity = "table": npz with year, f107; "" = src/talos/data/f107_esa.npz
 
 
 def decimal_year(epoch: datetime) -> float:
@@ -55,22 +60,38 @@ def _load_table():
     return d["alt_km"], d["f107"], d["log_rho"]
 
 
+@lru_cache(maxsize=4)
+def load_f107_table(path: str = "") -> tuple[np.ndarray, np.ndarray]:
+    """(decimal year, F10.7) for activity = "table"."""
+    p = Path(path) if path else _F107_TABLE
+    if not p.exists():
+        raise FileNotFoundError(f"F10.7 table {p} not found; build it with scripts/build_f107_table.py "
+                                "from ESA's fap_mon.dat (https://static.sdo.esoc.esa.int/SOLMAG/)")
+    d = np.load(p)
+    return np.ascontiguousarray(d["year"], float), np.ascontiguousarray(d["f107"], float)
+
+
 class Atmosphere:
     def __init__(self, cfg: AtmosphereConfig = AtmosphereConfig(), epoch_year: float = 2026.97) -> None:
         if cfg.model not in ("msis_table", "exponential"):
             raise ValueError(f"unknown atmosphere model {cfg.model!r}")
-        if cfg.activity not in ("cycle", "constant"):
+        if cfg.activity not in ("cycle", "constant", "table"):
             raise ValueError(f"unknown solar activity {cfg.activity!r}")
         self.cfg = cfg
         self.epoch_year = epoch_year
         if cfg.model == "msis_table":
             self._alt, self._f, self._lr = _load_table()
+        # (year, F10.7) series; dummies otherwise, so the numba kernel always gets arrays
+        self._ty, self._tf = (load_f107_table(cfg.f107_table) if cfg.activity == "table"
+                              else (np.array([0.0, 1.0]), np.zeros(2)))
 
     def f107(self, t_s=0.0) -> np.ndarray:
         c = self.cfg
         if c.activity == "constant":
             return np.full(np.shape(t_s), c.f107_constant, dtype=float)
         year = self.epoch_year + np.asarray(t_s, float) / YEAR
+        if c.activity == "table":
+            return np.interp(year, self._ty, self._tf)
         x = np.mod((year - c.cycle_min_year) / c.cycle_period_yr, 1.0)
         xr = (c.cycle_max_year - c.cycle_min_year) / c.cycle_period_yr
         g = np.where(x < xr, 0.5 * (1 - np.cos(np.pi * x / xr)),

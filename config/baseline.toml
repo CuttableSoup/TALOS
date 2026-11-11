@@ -144,9 +144,11 @@ fragment_dv_sigma_m_s = 5.0    # [pick] per-axis fragment dv spread
 
 [atmosphere]
 model = "msis_table"           # msis_table (NRLMSIS 2.1 global mean vs F10.7) | exponential (static, legacy)
-activity = "cycle"             # cycle | constant
+activity = "table"             # [sourced] table: ESA SOLMAG observed + forecast monthly F10.7
+                               # (scripts/build_f107_table.py; gitignored) | cycle | constant
+f107_table = ""                # "" = src/talos/data/f107_esa.npz
 f107_constant = 130.0          # used when activity = "constant"
-f107_min = 70.0                # [pick] smoothed cycle minimum
+f107_min = 70.0                # [pick] smoothed cycle minimum (activity = "cycle")
 f107_max = 155.0               # [pick] smoothed cycle maximum (cycle 25 ~150-165)
 cycle_min_year = 2019.96       # cycle 25 minimum (Dec 2019)
 cycle_max_year = 2024.8        # cycle 25 smoothed maximum (~Oct 2024)

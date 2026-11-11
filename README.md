@@ -164,7 +164,7 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 | Sun exclusion | `[atp] sun_exclusion_deg` | 30° | pick (30–45 typical, unsourced) |
 | Detection model | `[atp] detection_model` | passive_optical: Lambertian sphere magnitude, acquire ≤ 16 mag for 10 s, track ≤ 18 mag, +3 mag on sunlit-Earth background | all picks; research needed |
 | Debris albedo | `[population] albedo_median/log_sigma` | 0.1, lognormal σ=0.5 | pick (debris ~0.1–0.2) |
-| Atmosphere | `[atmosphere]` | NRLMSIS 2.1 global mean (Ap 15) vs F10.7; cycle min 70 / max 155, cycle-25 timing | table derived from MSIS; forecast is a pick (use NOAA SWPC) |
+| Atmosphere | `[atmosphere]` | NRLMSIS 2.1 global mean (Ap 15) vs F10.7; ESA SOLMAG monthly F10.7, observed then forecast (`activity = "table"`, `scripts/build_f107_table.py`) | density table derived from MSIS; F10.7 sourced (ESA forecast, Nov 2026). Lifetime vs references: TALOS/OSCAR 0.69–0.96, TALOS/DAS 0.77–1.57 (`scripts/validate_lifetime_oscar.py`) |
 | Background source | `[dynamics] source_mode` | `replace_decays`: each natural decay of a never-engaged object is replaced by an identical object (fresh phases), i.e. the un-lasered band is in steady state; `fraction` = `background_frac_per_yr` (2 %/yr) | assumption (ORDEM forecasts growth, not modelled) |
 | Protected shells | `[risk] shell_*_km` | crewed 370–430 km, Starlink 530–575 km | pick |
 | Uncertainty ranges | `talos.sweep.UNCERTAIN_INPUTS` | η₂ 0.3–0.67, Cm 25–100 (log), η₁ 0.2–0.4, thrust angle 30–60°, wall-plug 0.04–0.17 (log), sun excl. 30–45°, settle 2–10 s | sourced ranges where the table has one, else picks |
