@@ -27,10 +27,11 @@ from .engagement import AblationParams
 from .platform import ATPConfig, LaserConfig, Platform, ResourceConfig, baseline_constellation
 from .atmosphere import Atmosphere, AtmosphereConfig, decimal_year
 from .campaign import CampaignConfig
+from .survival import SurvivalConfig
 from .cost import CostConfig
 from .dynamics import DynamicsConfig, PopulationDynamics
 from .knowledge import Knowledge, KnowledgeConfig
-from .sun import SunConfig, SunEnvironment
+from .sun import SunConfig, SunEnvironment, julian_date
 
 DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "config" / "baseline.toml"
 
@@ -122,6 +123,7 @@ class Scenario:
     cost: CostConfig = field(default_factory=CostConfig)
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
     campaign: CampaignConfig = field(default_factory=CampaignConfig)
+    survival: SurvivalConfig = field(default_factory=SurvivalConfig)
 
 
 # suffix -> (SI suffix, converter); longest suffix wins
@@ -312,7 +314,7 @@ def build(sc: Scenario) -> Built:
                if pl.enabled else None)
     rng = np.random.default_rng(sc.run.seed + 1) if sc.run.stochastic else None
     dyn = (PopulationDynamics(sc.dynamics, p, float(p.n_real) / n, np.random.default_rng(sc.run.seed + 2),
-                              source=source)
+                              source=source, epoch_jd=julian_date(sc.run.epoch))
            if sc.dynamics.enabled else None)
     know = (Knowledge(sc.knowledge, np.random.default_rng(sc.run.seed + 5)) if sc.knowledge.active else None)
     return Built(plats, pop, sc.ablation, env, planner, rng, make_atmosphere(sc), dyn, know)
@@ -323,13 +325,16 @@ RESUME_MAY_DIFFER = ("run.name", "run.duration_s", "run.checkpoint_s")
 # ... and, with fresh_platforms, everything about the platforms (not the population, its
 # dynamics, the atmosphere / sun, the risk shells or the clock and generators)
 FRESH_MAY_DIFFER_SECTIONS = ("laser", "atp", "resources", "constellation", "cost", "knowledge", "planner",
-                             "campaign",
+                             "campaign", "survival",
                              "ablation")
-FRESH_MAY_DIFFER = ("run.score", "run.stochastic", "run.predict_pulse_stride")
+FRESH_MAY_DIFFER = ("run.score", "run.stochastic", "run.predict_pulse_stride",
+                    "dynamics.srp", "dynamics.srp_cr")  # SRP added 2026-11-11: may start at a restart
+# keys absent from older checkpoints, with the value that reproduces how those runs behaved
+_LEGACY = {"dynamics.srp": False, "dynamics.srp_cr": 1.2}
 
 
 # sections newer than some checkpoints on disk; default values of these match "absent"
-_NEW_SECTIONS = ("campaign",)
+_NEW_SECTIONS = ("campaign", "survival")
 _DEFAULTS = scenario_dict(Scenario())
 
 
@@ -357,7 +362,7 @@ def run_scenario(sc: Scenario, on_chunk=None, checkpoint_path=None, resume_path=
         resume = load_checkpoint(resume_path)
         old, new = resume["meta"].get("scenario", {}), scenario_dict(sc)
         diff = sorted(k for k in set(old) | set(new)
-                      if not _may_differ(k, fresh_platforms) and old.get(k) != new.get(k)
+                      if not _may_differ(k, fresh_platforms) and old.get(k, _LEGACY.get(k)) != new.get(k)
                       # sections added after the checkpoint was written: fine while left at defaults
                       and not (k not in old and k.split(".")[0] in _NEW_SECTIONS and new.get(k) == _DEFAULTS.get(k)))
         if diff:

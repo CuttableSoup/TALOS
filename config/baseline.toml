@@ -170,6 +170,9 @@ background_frac_per_yr = 0.02  # [pick] "fraction" mode: new objects/yr as a fra
 breakup_rate_per_yr = 0.5      # [pick] breakups/yr in the band
 breakup_fragments = 2000       # [pick] 1-10 cm fragments per breakup
 breakup_dv_sigma_m_s = 50.0    # [pick] per-axis fragment dv spread
+srp = true                     # [physics] solar radiation pressure on eccentricity (talos.srp); ~10x drag
+                               # at 800 km for A/m ~ 2 m2/kg. Runs before 2026-11-11 had none.
+srp_cr = 1.2                   # [pick] radiation pressure coefficient
 
 [sun]
 enabled = true                 # false: always sunlit, no sun gates
@@ -201,8 +204,25 @@ laser_rated_shots = 1.0e10           # pump diode / optics shot life
 hardware_usd_per_kg = 50000.0
 launch_usd_per_kg = 3000.0
 ops_usd_per_sat_yr = 2000000.0
+# station keeping: platforms fly fixed orbits in the sim; drag make-up is costed here
+drag_cd = 2.2                        # free-molecular flat plate
+drag_area_fixed_m2 = 10.0            # bus + beam director cross-section
+drag_area_frac = 0.15                # share of array + radiator facing the flow (dawn-dusk SSO: near edge-on)
+sk_isp_s = 1500.0                    # Hall thruster
+sk_tank_fraction = 0.1               # tank + feed per kg propellant
+propellant_usd_per_kg = 3000.0       # xenon / krypton
 
 [knowledge]                          # orbit knowledge (talos.knowledge); all 0 = perfect knowledge
 od_sigma_pos_m = 0.0                 # per-axis state-estimate error at burst start (track + laser
 od_sigma_vel_m_s = 0.0               #   ranging: ~0.1 m / ~0.01 m/s, negligible; angles-only: much worse)
 pointing_bias_rad = 0.0              # per-axis constant pointing offset over a burst
+
+[survival]                           # debris impacts on the platforms (talos.survival); needs
+                                     # scripts/build_platform_flux.py (ORDEM), else columns are NaN
+enabled = true
+lethal_size_m = 0.01                 # [sourced, weak] >= 1 cm destroys a spacecraft in LEO (SDC9 paper 330)
+bus_area_m2 = 10.0                   # [pick] bus + beam director cross-section
+radiator_crit_size_m = 0.001         # [pick] particle that punctures a radiator tube / manifold (unarmoured)
+radiator_vulnerable_frac = 0.1       # [pick] tube + manifold share of radiator area
+radiator_normal = "radial"           # [pick] zenith / nadir faces: ~1000x fewer hits than ram-facing
+array_normal = "orbit_normal"        # dawn-dusk SSO, sun-tracking

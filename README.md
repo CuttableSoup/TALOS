@@ -175,6 +175,9 @@ unknown (estimates range ~4/hr to ~28/hr) driving array size, sat count, cost.
 | Storage specific energy | `storage_specific_energy_wh_kg` | Li-ion 120, LTO 70, supercap 5 Wh/kg (pack) | picks |
 | Burst readiness | `ready_burst_s` | = burst_s, capped at 95 % of the feasible burst | policy |
 | Mass / cost | `[cost]` | radiator 10 kg/m², array 100 W/kg, laser 20 kg/kW, beam director 300 kg, bus 30 %; $50k/kg hardware, $3k/kg launch, $2M/sat-yr ops; 5 yr design life, 1e10 shots | picks except radiator (research ~10 kg/m²) |
+| Station keeping | `[cost] drag_*`, `sk_*` | platforms hold their orbits (no drag in the sim); drag make-up ∫½ρv²C_dA/m over the life with the scenario atmosphere, Cd 2.2, area 10 m² + 15 % of array + radiator, Hall Isp 1500 s, tank 10 % | picks; d027: 0.2–0.8 m/s per platform over 2.1 yr (cycle 25 declining), ~0.1 kg propellant, cost change < 0.01 % |
+| Debris SRP | `[dynamics] srp`, `srp_cr` | on; Cr 1.2; orbit-averaged e forcing, cylindrical shadow | physics; Cr pick |
+| Platform impacts | `[survival]` | ORDEM 2027 directional flux; lethal ≥ 1 cm on 10 m² bus; radiator puncture ≥ 1 mm on 10 % of area, zenith/nadir faces | 1 cm **sourced** (weak, SDC9 paper 330); the rest picks; orientation and puncture size swing $/debris-yr from +2 % to ×18 |
 
 ## Open issues
 - Thermal model (2026-11 research pass) is now a lumped PCM/loop node with T⁴
@@ -939,6 +942,52 @@ intacts), environment (Stevenson, Manis, Rossi). `[knowledge]` and breakup rates
 - Defaults unchanged (`sbm`, albedo 0.1, Cm scale 1). One seed, early sky only (the late
   sky comes from the SBM `design_2yr` checkpoint).
 
+## Station keeping, SRP and platform survivability (2026-11-11)
+Three physics gaps closed, with the size of each on `config/design_mc.toml` (d027):
+- **Station keeping** (`talos.cost`, `[cost] drag_*`, `sk_*`). Platforms still fly fixed
+  orbits; the drag make-up is costed: ∫½ρv²C_dA/m over the life at each altitude with the
+  scenario atmosphere, area 10 m² + 15 % of array + radiator (dawn-dusk arrays near edge-on),
+  Hall Isp 1500 s. 0.2–0.8 m/s per platform over 2.1 yr (cycle 25 declining), ~0.1 kg of
+  propellant: negligible.
+- **Solar radiation pressure on debris** (`talos.srp`, `[dynamics] srp = true`, now on).
+  Orbit-averaged eccentricity forcing de/dt = 3/(2na)·F×ĥ, F = −P·Cr·(A/m)·ŝ, scaled by the
+  lit fraction (cylindrical shadow), applied in the daily step after drag. At A/m ≈ 2 m²/kg
+  it is ~10× drag at 800 km and moves e by ~2e-4/day; J2 apsidal rotation bounds the
+  swing. Lifetime estimates (debris-years) stay drag-only. Older checkpoints resume with
+  SRP off unless restarted with `--fresh-platforms`.
+- **Platform debris impacts** (`talos.survival`, `[survival]`). ORDEM 3.2 directional flux
+  on the platform orbits (`scripts/build_platform_flux.py` → `platform_flux_2027.npz`,
+  gitignored). Mission-ending: ≥ 1 cm on the bus + beam director (10 m²), or a radiator
+  tube puncture (≥ `radiator_crit_size_m` on 10 % of the radiator). A constant hazard turns
+  the life T into an expected service life (1 − e^{−λT})/λ, which scales debris-years and
+  operations cost (hardware is sunk). Meteoroids are not included (ORDEM is debris only).
+  ORDEM at 800 km, 2027: ≥ 1 mm 1.76 /m²/yr, ≥ 1 cm 1.4e-4 (cross-section); a plate facing
+  ram sees 0.85×, the orbit normal 0.36×, zenith 0.0013×. ORDEM's curve drops ~100×
+  between 1 and 2 mm, so the critical size matters as much as the orientation:
+  | radiator faces | puncture size | radiator hits/yr | P(survive 2.1 yr) | $/debris-yr |
+  |---|---|---|---|---|
+  | zenith / nadir (default) | 1 mm | 0.020 | 0.957 | 437 |
+  | zenith / nadir | 2 mm | 0.000 | 0.997 | 428 |
+  | orbit normal | 1 mm | 5.0 | 0.001 | 3,660 |
+  | orbit normal | 2 mm | 0.037 | 0.924 | 444 |
+  | ram (along track) | 1 mm | 11.5 | 0.000 | 7,853 |
+  | ram | 2 mm | 0.076 | 0.853 | 462 |
+  Bus ≥ 1 cm: 0.0012 /yr. Arrays (orbit normal, 172 m²): ~91 hits ≥ 1 mm and 0.008 ≥ 1 cm
+  per year, reported as degradation, not costed. Design consequence: the radiator must sit
+  edge-on to the debris stream (zenith / nadir faces) with tubes armoured against ≥ 2 mm
+  particles. A nadir face sees the Earth, which conflicts with the radiator's thermal model
+  (Earth view factor 0.22); not reconciled.
+30 days, early sky, seed 0 (runs/srp_30d vs runs/sourcing3_30d, both re-costed with impacts):
+| μ model | SRP | removed | debris-yr/yr | natural decays | $/debris-yr |
+|---|---|---|---|---|---|
+| SBM | off | 2,970 | 850k | 50 | 437 |
+| SBM | on | 2,983 | 856k | 40 | 434 |
+| Hanada | off | 7,804 | 898k | 25 | 439 |
+| Hanada | on | 7,761 | 891k | 18 | 440 |
+SRP is within seed noise over 30 days; its lifetime effect on light objects over years is
+not captured while debris-years use drag-only lifetimes. Platform impacts cost +2 % at the
+default orientation and dominate everything else if the radiator faces the flow.
+
 ## Next step
 - Seeds on the leading designs (control, d027, d002, d007): every design result is one seed.
 - Whole-mission run of d027 (`config/design_mc.toml`, 2 years, checkpointed; overnight).
@@ -947,5 +996,8 @@ intacts), environment (Stevenson, Manis, Rossi). `[knowledge]` and breakup rates
   0–1 %, thermal coupling (melt bound) and the μ model (`sbm` / `hanada_material` / `hanada`).
 - Storage sized for life (bigger / longer-lived bank) with average power; Δv per burst on
   μ ≥ 2 targets; whether to size the mission to the light inventory (~2 yr).
+- Radiator orientation and tube armour against ≥ 1–2 mm debris (survivability), reconciled
+  with the thermal model's Earth view; meteoroid flux (NASA MEM) on top of ORDEM.
+- Debris lifetimes with SRP (debris-years are drag-only).
 - Absolute pointing budget; detection & tracking refinements (PROOF albedo on by default);
   ODPO vs ESA F10.7; MASTER population cross-check (MASTER 8.2.3 is installed).

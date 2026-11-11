@@ -16,6 +16,8 @@ Applied every ``update_s`` of sim time to the whole population:
     population in steady state, class by class (short-lived low-mu objects are
     replenished as fast as they decay), so laser removals are the only net change
     apart from breakups. Assumption, not a sourced source term.
+* Solar radiation pressure (``srp``): the orbit-averaged eccentricity forcing of
+  talos.srp over the same step, after drag (matters for high-A/m objects).
 * Breakups: Poisson events at ``breakup_rate_per_yr``; each puts
   ``breakup_fragments`` 1-10 cm fragments around a random parent orbit in the
   band with an isotropic Gaussian dv (``breakup_dv_sigma_m_s`` per axis).
@@ -46,6 +48,8 @@ class DynamicsConfig:
     breakup_rate_per_yr: float = 0.5  # PICK: breakups / yr in the band
     breakup_fragments: int = 2000  # PICK: 1-10 cm fragments per breakup
     breakup_dv_sigma_m_s: float = 50.0  # PICK: per-axis fragment dv spread
+    srp: bool = True  # solar radiation pressure on eccentricity (talos.srp), applied each step
+    srp_cr: float = 1.2  # PICK: radiation pressure coefficient (1 = absorber, 2 = mirror)
 
 
 def toy_elements(n: int, rng: np.random.Generator, alt_km=(600.0, 1000.0)) -> KeplerElements:
@@ -78,7 +82,7 @@ def breakup_elements(rng, n: int, dv_sigma: float, alt_km=(600.0, 1000.0),
 
 class PopulationDynamics:
     def __init__(self, cfg: DynamicsConfig, pop_cfg, weight: float, rng: np.random.Generator,
-                 source=None) -> None:
+                 source=None, epoch_jd: float | None = None) -> None:
         """``source(n, rng, t, weight) -> DebrisPopulation`` draws background objects (and breakup
         parent orbits) from the initial population's distribution; None -> the toy distribution."""
         self.cfg = cfg
@@ -86,6 +90,7 @@ class PopulationDynamics:
         self.weight = weight
         self.rng = rng
         self.source = source
+        self.epoch_jd = epoch_jd  # needed for SRP (sun direction); None -> no SRP
         self.next_update = cfg.update_s
         if cfg.source_mode not in ("fraction", "replace_decays"):
             raise ValueError(f"source_mode {cfg.source_mode!r}: expected fraction or replace_decays")
@@ -108,6 +113,13 @@ class PopulationDynamics:
         decayed = np.zeros(len(pop), dtype=bool)
         if len(live):
             el = decay_to(pop.elements[live], pop.ballistic_coeff[live], pop.epoch_s[live], t)
+            if self.cfg.srp and self.epoch_jd is not None and dt > 0:
+                from .srp import srp_step
+                from .sun import sun_vector
+
+                sun_hat, dist = sun_vector(self.epoch_jd + (t - 0.5 * dt) / 86400.0)
+                el = srp_step(el, 1.0 / pop.areal_density[live], sun_hat, t - pop.epoch_s[live],
+                              cr=self.cfg.srp_cr, sun_dist_m=float(dist))
             for k in ("a", "e", "i", "raan", "argp", "M"):
                 getattr(pop.elements, k)[live] = getattr(el, k)
             pop.epoch_s[live] = t

@@ -11,3 +11,4 @@ src/talos/data/ordem_*.npz
 research/
 *.exe
 src/talos/data/f107_*.npz
+src/talos/data/platform_flux_*.npz
