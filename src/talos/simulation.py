@@ -28,10 +28,12 @@ from .lifetime import apply_dv, is_removed, orbital_lifetime, shell_fraction
 from .propagator import propagate
 from .platform import Platform
 from .resources import ResourceState
+from .campaign import focus_need, focus_summary, reference_impulse, select_focus
 from .scheduler import burst_states, evaluate_candidates, pick
 from .screening import chunk_cache, screen_windows
 
 if TYPE_CHECKING:
+    from .campaign import CampaignConfig
     from .dynamics import PopulationDynamics
     from .planner import CommitPlanner
     from .sun import SunEnvironment
@@ -61,6 +63,7 @@ class EngagementEvent:
     raan_after_rad: float = float("nan")
     argp_after_rad: float = float("nan")
     M_after_rad: float = float("nan")
+    focus: bool = False  # target was in the campaign's focus set (talos.campaign)
 
 
 @dataclass
@@ -90,6 +93,10 @@ class SimResult:
     # and counts only removals after it; objects removed before are flagged here
     t_start_s: float = 0.0
     removed_at_start: np.ndarray | None = field(default=None, repr=False)
+    # focus campaign (talos.campaign): focus-set indices, dv still needed at start and end
+    focus_idx: np.ndarray | None = field(default=None, repr=False)
+    focus_need0: np.ndarray | None = field(default=None, repr=False)
+    focus_need1: np.ndarray | None = field(default=None, repr=False)
 
     def records(self) -> list[dict]:
         return [asdict(e) for e in self.events]
@@ -140,6 +147,8 @@ class SimResult:
             **self.env_stats,
             **self.pop_stats,
             **risk,
+            **(focus_summary(self.focus_idx, self.focus_need0, self.focus_need1, rem, self.population,
+                             self.events) if self.focus_idx is not None else {}),
         }
 
 
@@ -194,6 +203,7 @@ def run_engagements(
     resume: dict | None = None,
     predict_pulse_stride: int = 1,
     knowledge=None,
+    campaign: "CampaignConfig | None" = None,
 ) -> SimResult:
     """Run the engagement loop. With ``planner`` (a CommitPlanner), committed
     objects take priority and fillers that would block a reservation are skipped.
@@ -213,7 +223,9 @@ def run_engagements(
     scenario). ``resume`` (a dict from ``load_checkpoint``) continues from that state with
     the same inputs (platforms, population, rng, dynamics, planner as built for the original
     run); ``duration_s`` may be longer than the original. A resumed run reproduces the
-    uninterrupted one exactly."""
+    uninterrupted one exactly.
+    ``campaign`` (talos.campaign.CampaignConfig, enabled): focus set chosen at the start (or at a
+    fresh-platform restart) gets priority; see talos.campaign."""
     pop = copy.deepcopy(population)
     pop.cm_scale = np.asarray(params.cm_scale_for(pop.material), float)  # laser coupling by material
     pop0 = copy.deepcopy(pop)  # initial state of every object (incl. ones added later)
@@ -287,6 +299,17 @@ def run_engagements(
         if planner is not None and not fresh:
             planner.__dict__.update(r["planner"])
             planner.env = env
+    use_focus = campaign is not None and campaign.enabled
+    focus_idx = focus_need0 = None
+    if use_focus:
+        if resume is not None and not fresh and resume.get("focus") is not None:
+            focus_idx, focus_need0 = resume["focus"]
+        else:
+            focus_idx = select_focus(campaign, pop, removed | decayed)
+            focus_need0 = focus_need(pop, focus_idx)
+    focus_mask = np.zeros(len(pop), dtype=bool)
+    if use_focus:
+        focus_mask[focus_idx] = True
     next_ckpt = (c_start // checkpoint_every_s + 1) * checkpoint_every_s if checkpoint_every_s else np.inf
 
     def save_checkpoint(c0: float) -> None:
@@ -310,6 +333,7 @@ def run_engagements(
             "planner": None if planner is None else {k: v for k, v in planner.__dict__.items() if k != "env"},
             "pending": pending, "frag_stats": frag_stats, "frag_idx": frag_idx,
             "knowledge": None if knowledge is None else dict(knowledge.__dict__),
+            "focus": None if focus_idx is None else (focus_idx, focus_need0),
             "meta": checkpoint_meta or {},
         }
         tmp = f"{checkpoint_path}.tmp"
@@ -375,7 +399,9 @@ def run_engagements(
         # Also used for candidate prediction: engaged objects are excluded from both.
         cache = chunk_cache(pop) if _kernels.HAVE_NUMBA else None
         for p_idx, plat in enumerate(platforms):
-            wins = screen_windows(plat, pop, t, candidates=np.flatnonzero(~(removed | decayed)), batch=batch,
+            live_idx = (focus_idx[~(removed | decayed)[focus_idx]] if use_focus and campaign.exclusive
+                        else np.flatnonzero(~(removed | decayed)))
+            wins = screen_windows(plat, pop, t, candidates=live_idx, batch=batch,
                                   sun_hat=sun_hat, cache=cache)
             if not wins:
                 continue
@@ -397,7 +423,26 @@ def run_engagements(
                                             state_error=(knowledge.state_error if knowledge is not None
                                                          and knowledge.has_state_error else None))
                 is_commit = False
-                if planner is not None and cands:
+                is_focus = False
+                if use_focus and cands:
+                    if len(focus_mask) < len(pop):  # objects added since (sources, fragments) are not focus
+                        focus_mask = np.concatenate([focus_mask, np.zeros(len(pop) - len(focus_mask), bool)])
+                    i_ref = campaign.min_impulse_frac * reference_impulse(
+                        min(plat.resources.burst_s, rs.max_fire_s()), plat.laser, params)
+                    fc = [c for c in cands if focus_mask[c.debris_index]
+                          and c.dv_retrograde * float(pop.laser_areal_density(c.debris_index)) >= i_ref]
+                    bfoc = pick(fc, score) if fc else None
+                    if campaign.exclusive:
+                        if bfoc is None:
+                            k += 1
+                            continue
+                        is_focus = True
+                    elif bfoc is not None:
+                        imp = lambda c: c.dv_retrograde * float(pop.laser_areal_density(c.debris_index))  # noqa: E731
+                        is_focus = imp(bfoc) >= campaign.quality * max(imp(c) for c in cands)
+                if is_focus:
+                    best = bfoc
+                elif planner is not None and cands:
                     mine = [c for c in cands if planner.is_committed(c.debris_index)]
                     rest = [c for c in cands if not planner.is_committed(c.debris_index)]
                     bc = pick(mine, score) if mine else None
@@ -458,7 +503,7 @@ def run_engagements(
                     perigee_alt_after_m=float(el_new.rp - R_EARTH), removed=gone, committed=is_commit,
                     t_elements_s=float(tm), a_after_m=float(el_new.a), e_after=float(el_new.e),
                     i_after_rad=float(el_new.i), raan_after_rad=float(el_new.raan),
-                    argp_after_rad=float(el_new.argp), M_after_rad=float(el_new.M),
+                    argp_after_rad=float(el_new.argp), M_after_rad=float(el_new.M), focus=is_focus,
                 ))
                 k = int(np.searchsorted(t, ready_at[plat.name]))
         if on_chunk is not None:
@@ -536,7 +581,8 @@ def run_engagements(
     return SimResult(events, duration_s, [p.name for p in platforms], fire_time, removed, max_duty, pop, li, lf,
                      dict(planner.stats, committed_now=len(planner.committed)) if planner is not None else {},
                      env_stats, pop_stats, names, res_i, res_f, res_frag,
-                     c_start if fresh else 0.0, removed_at_start)
+                     c_start if fresh else 0.0, removed_at_start,
+                     focus_idx, focus_need0, focus_need(pop, focus_idx) if use_focus else None)
 
 
 def _storage_life_yr(cycle_damage_per_yr: float, calendar_life_yr: float) -> float:

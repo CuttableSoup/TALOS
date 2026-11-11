@@ -819,6 +819,76 @@ Early mission for reference: $344/debris-yr (first 30 days), $518 over 2 years.
 - `summaries/<name>.parquet` per run; `summary.parquet` is rebuilt from them (parallel
   runs into one folder had overwritten each other's summary).
 
+## Monte Carlo design search (2026-11-10)
+`scripts/mc_design.py N DAYS --out runs/x [--box key=lo:hi[:log] ...] [--designs-csv f]`:
+Latin hypercube over six levers (laser power, radiator, array, supercap kWh, burst length,
+PCM), every design flown over the early sky (fresh start) and the day-720 sky
+(`design_2yr` checkpoint, fresh platforms) with common random numbers. Mission score: the
+first year at the early rate, the rest at the late rate; life = min(5 yr, laser shots,
+storage at the weighted cycling + 10-yr calendar), at 0.5 M and 2.3 M supercap cycles
+(rescaled, no extra runs). Design 000 = config/design.toml.
+- Pass 1, 32 designs × 5 d over a wide box (runs/mc_design): radiator area drives
+  the rate (rank corr. 0.76 early / 0.72 late). Laser power and storage kWh only add cost (+0.44
+  with $/debris-yr). ≥ 80 kW lasers raise late Δv/burst 1.8 → 4–6.6 m/s against heavy
+  targets but fire less in the same heat budget: $720–990 vs $557.
+- Pass 2, 32 designs × 5 d in 15–35 kW, 70–180 m², 1200–3500 ft², 1–3 kWh, 25–60 s,
+  40–150 kg (runs/mc_design2): inside this box, array power (0.8) and radiator (0.58) set the rate. Longer
+  bursts and ~30 kW are cheaper per debris-year. Best $473 (5 d) vs control $557.
+- 30-day check on both skies (runs/mc_validate_30d):
+  | design | kW | radiator m² | array ft² | kWh | burst s | PCM kg | early dy/yr | late dy/yr | late Δv/burst | life 0.5M | cost | $/dy 0.5M | $/dy 2.3M |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | control (design.toml) | 25 | 60 | 1600 | 2.0 | 20 | 25 | 632k | 338k | 1.85 | 2.29 | $651M | 609 | 339 |
+  | a_d013 | 18.7 | 95 | 1713 | 1.2 | 40 | 68 | 830k | 443k | 1.63 | 1.74 | $673M | 581 | 275 |
+  | b_d007 | 20.8 | 116 | 2340 | 2.0 | 56 | 40 | 975k | 544k | 2.45 | 2.01 | $829M | 543 | 271 |
+  | **b_d027** (config/design_mc.toml) | 28 | 94 | 1852 | 1.7 | 34 | 50 | 882k | 494k | 2.44 | 2.05 | $758M | **541** | 274 |
+  | b_d002 | 32.5 | 102 | 2208 | 1.3 | 47 | 46 | 996k | 578k | 2.13 | 1.64 | $798M | 585 | 261 |
+  | b_d012 | 35 | 137 | 3078 | 1.4 | 42 | 94 | 1293k | 769k | 2.30 | 1.38 | $982M | 618 | 266 |
+  The 5-day ranking holds at 30 days (5-day $/dy were ~8–15 % optimistic). d007 and d027 are
+  best at the datasheet cycle rating (−11 %) and within 3 % of the best at 2.3 M (−20 %).
+  At 0.5 M storage life (1.4–2.3 yr) is still the limit. The highest-rate designs
+  (d012) wear the bank out fastest and only win if the 2.3 M rating holds. Late-sky
+  Starlink-shell risk rises with the rate (+380 control, +440–1,580 obj-yr/yr), which is
+  noisy at 30 d.
+- Caveats: one seed per design, cost picks unchanged, pointing jitter not a lever
+  (no cost model; it is worth up to 7× in impulse, see the large-debris laser estimate).
+
+## Large-debris test (2026-11-10)
+Every mission ends on large, heavy debris: after the light tail is gone, greedy scheduling
+spreads ~5 m/s per object per month over the ~150 9–10 cm objects it touches, and no design
+removed one in 30 days on the day-720 sky (0–1 per design, runs/mc_validate_30d). The
+test (`talos.campaign`, `[campaign]`, off by default; `python scripts/large_debris_test.py
+[DAYS] --config a.toml b.toml`, or `scripts/mc_design.py ... --large-test 30`):
+- Fresh platforms over the day-720 sky of design_2yr. Exclusive focus on every live object
+  ≥ 9 cm (318, median μ 17, Δv to removal median 146 m/s): the same set for every design.
+  Among focus candidates the run score (removal_progress) picks, so bursts pile onto the
+  best-placed objects. Screening covers the focus set only: ~5 min per design for 30 days.
+- Burst-quality gate `min_impulse_frac` (predicted impulse ≥ f × a full burst at φ_opt, else
+  wait). With focus sets this small the platforms are opportunity-limited (duty ~3 %, one
+  burst per object per 10-min chunk), so a strict gate loses passes. 2 days on 20 objects:
+  f = 0 / 0.15 / 0.3 / 0.5 → 39 / 37 / 32 / 25 m/s total. 0.15 is the default. A 100-object set
+  gave 4× the total Δv of a 20-object set (more passes to choose from).
+- `exclusive = false` (focus first when its impulse ≥ 0.5 × the best candidate's) almost never
+  picks a focus object (6 bursts in 2 days): heavy objects don't win against hundreds of
+  candidates. Kept as an option.
+- 30 days, the six validated designs (runs/mc_validate_30d, `*_large`):
+  | design | pulse kJ | burst s | removed ≥ 9 cm (greedy) | removed (campaign) | Δv to the set | Δv/burst | mean progress | heaviest removed μ | $/dy 0.5M |
+  |---|---|---|---|---|---|---|---|---|---|
+  | control | 0.76 | 20 | 0–1 | 15 | 7,160 | 0.33 | 13 % | 9.8 | 609 |
+  | a_d013 | 0.57 | 40 | 0 | 9 | 5,327 | 0.36 | 10 % | 9.0 | 581 |
+  | b_d007 | 0.63 | 56 | 0 | 9 | 6,574 | 0.49 | 12 % | 9.0 | 543 |
+  | **b_d027** | 0.85 | 34 | 0 | 19 | 8,698 | 0.42 | 16 % | 12.2 | **541** |
+  | b_d002 | 0.98 | 47 | 0 | 23 | 9,262 | 0.36 | 17 % | 12.2 | 585 |
+  | b_d012 | 1.06 | 42 | 0 | 29 | 10,929 | 0.41 | 21 % | 19.7 | 618 |
+  Concentrating fire works: 9–29 removals where greedy gets 0–1, up to μ ≈ 20. Large-debris
+  capability follows pulse energy (reach and impulse per pass, since passes are the limit here), not
+  the heat/power levers that set cost per debris-year. So the two metrics pull apart. The
+  low-power cost winners (d013, d007) do worse than the control on large debris. d027
+  (config/design_mc.toml) is the only design better on both. At the campaign's low duty,
+  debris-years are ~5× costlier than greedy: it is a capability test, not an operating mode.
+- Caveats: one seed (focus set is fixed, the stochastic draws are not), 30 days. Removed
+  objects are the lightest of the set so far (μ ≤ 20 of a median 17), and the heavy tail
+  (μ ≥ 50, NaK droplets) is untouched.
+
 ## Next step
 Whole-mission design sweep scored on cost per debris-year over the early sky and the day-720 sky (`--fresh-platforms`), average power × burst length × storage size, with the storage cycle rating at 0.5 M and 2.3 M;
 Storage cycle life is the late-mission limit: size storage for life (bigger / longer-lived bank, fewer cycles per joule) together with average power;

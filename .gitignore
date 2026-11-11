@@ -8,5 +8,6 @@ runs/
 *.parquet
 src/talos/data/ordem_*.npz
 *.zip
+research/
 *.exe
 src/talos/data/f107_*.npz

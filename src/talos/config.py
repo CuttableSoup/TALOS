@@ -26,6 +26,7 @@ from .constants import FT2_TO_M2
 from .engagement import AblationParams
 from .platform import ATPConfig, LaserConfig, Platform, ResourceConfig, baseline_constellation
 from .atmosphere import Atmosphere, AtmosphereConfig, decimal_year
+from .campaign import CampaignConfig
 from .cost import CostConfig
 from .dynamics import DynamicsConfig, PopulationDynamics
 from .knowledge import Knowledge, KnowledgeConfig
@@ -119,6 +120,7 @@ class Scenario:
     risk: RiskConfig = field(default_factory=RiskConfig)
     cost: CostConfig = field(default_factory=CostConfig)
     knowledge: KnowledgeConfig = field(default_factory=KnowledgeConfig)
+    campaign: CampaignConfig = field(default_factory=CampaignConfig)
 
 
 # suffix -> (SI suffix, converter); longest suffix wins
@@ -317,8 +319,14 @@ RESUME_MAY_DIFFER = ("run.name", "run.duration_s", "run.checkpoint_s")
 # ... and, with fresh_platforms, everything about the platforms (not the population, its
 # dynamics, the atmosphere / sun, the risk shells or the clock and generators)
 FRESH_MAY_DIFFER_SECTIONS = ("laser", "atp", "resources", "constellation", "cost", "knowledge", "planner",
+                             "campaign",
                              "ablation")
 FRESH_MAY_DIFFER = ("run.score", "run.stochastic", "run.predict_pulse_stride")
+
+
+# sections newer than some checkpoints on disk; default values of these match "absent"
+_NEW_SECTIONS = ("campaign",)
+_DEFAULTS = scenario_dict(Scenario())
 
 
 def _may_differ(key: str, fresh: bool) -> bool:
@@ -345,7 +353,9 @@ def run_scenario(sc: Scenario, on_chunk=None, checkpoint_path=None, resume_path=
         resume = load_checkpoint(resume_path)
         old, new = resume["meta"].get("scenario", {}), scenario_dict(sc)
         diff = sorted(k for k in set(old) | set(new)
-                      if not _may_differ(k, fresh_platforms) and old.get(k) != new.get(k))
+                      if not _may_differ(k, fresh_platforms) and old.get(k) != new.get(k)
+                      # sections added after the checkpoint was written: fine while left at defaults
+                      and not (k not in old and k.split(".")[0] in _NEW_SECTIONS and new.get(k) == _DEFAULTS.get(k)))
         if diff:
             raise ValueError(f"checkpoint {resume_path} was written by a different scenario: "
                              + ", ".join(f"{k}: {old.get(k)!r} -> {new.get(k)!r}" for k in diff))
@@ -366,6 +376,7 @@ def run_scenario(sc: Scenario, on_chunk=None, checkpoint_path=None, resume_path=
                                on_chunk=on_chunk, risk_shells=sc.risk.shells(),
                                checkpoint_path=checkpoint_path, checkpoint_every_s=sc.run.checkpoint_s,
                                checkpoint_meta={"scenario": scenario_dict(sc)}, resume=resume,
-                               predict_pulse_stride=sc.run.predict_pulse_stride, knowledge=b.knowledge)
+                               predict_pulse_stride=sc.run.predict_pulse_stride, knowledge=b.knowledge,
+                               campaign=sc.campaign)
     finally:
         set_atmosphere(prev)

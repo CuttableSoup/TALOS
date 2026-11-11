@@ -1,0 +1,21 @@
+# TALOS design candidate from the Monte Carlo design search (README "Monte Carlo design
+# search", design b_d027): more radiator and array, a smaller supercap bank, longer bursts.
+# 30-day check on both mission phases: $541 vs $609 per debris-year (0.5 M cycles), $274 vs
+# $339 (2.3 M cycles) against config/design.toml. Every cost coefficient is a pick.
+#
+#   python scripts/run_baseline.py DAYS --config config/design_mc.toml --out runs/x
+
+base = "design.toml"
+
+[run]
+name = "design_mc"
+
+[laser]
+burst_power_kw = 28.0          # [pick, MC] 0.85 kJ/pulse at 33 Hz
+
+[resources]
+radiator_area_m2 = 93.5        # [pick, MC] 60 in design.toml
+array_area_ft2 = 1850.0        # [pick, MC] 1600 in design.toml
+battery_capacity_kwh = 1.66    # [pick, MC] supercap, 2.0 in design.toml
+burst_s = 34.0                 # [pick, MC] 20 in design.toml
+pcm_mass_kg = 50.0             # [pick, MC] 25 in design.toml
