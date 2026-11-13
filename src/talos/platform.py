@@ -1,6 +1,6 @@
 """Module 3 — platform / ATP configuration dataclasses and baseline point design.
 
-Defaults follow the README's L'ADROIT-class baseline. Values marked PLACEHOLDER
+Defaults follow the L'ADROIT-class baseline in CLAUDE.md. Values marked PLACEHOLDER
 have not been calibrated against a reference and should be before sweeps.
 """
 
@@ -53,6 +53,16 @@ class LaserConfig:
 #     cycles" (VR -> VR/2 at 25 C; EOL -20 % capacitance, +100 % ESR) at 3.8-5.4 Wh/kg
 #     module level; only space-qualified part found is a Nesscap 10 F cell (ESA EPPL II, no
 #     cycle count). Was 1e6 cycles / 5 Wh/kg before 2026-11-09.
+#   supercap_bosc (2026-11-12): the Airbus/ESA BOSC bank (Nesscap 10 F cells, 34s3p) in a life
+#     test at 45 C. Buergler et al., "Towards Supercapacitors in Space Applications", E3S Web
+#     of Conferences 16, 17003 (2017): ~11 % capacity fade / ~16 % ESR rise after ~1.5 M cycles
+#     (290 days), "after 4.5 million cycles the capacity has decreased by about 13% and the
+#     ESR has increased by around 36%", fade mostly in the first 600k cycles. ESA project page:
+#     ~13 % fade / 38 % resistance rise at 2.4 M. So 4.5e6 is a demonstrated floor, still short
+#     of the -20 % C / +100 % ESR end of life, and at a higher temperature than the Maxwell
+#     rating. The paper was read through search excerpts only (publisher blocks fetches): the
+#     reported test voltage of 0.8 x V_op was NOT confirmed. The preset assumes it: usable
+#     energy 0.8^2 = 64 % of rated, so 4.0 -> 2.56 Wh/kg (ASSUMPTION).
 STORAGE_PRESETS = {
     "li_ion": dict(storage_cycles_100=5000.0, storage_cycle_exponent=1.7,
                    storage_specific_energy_wh_kg=120.0, battery_rt_eff=0.85),
@@ -60,6 +70,8 @@ STORAGE_PRESETS = {
                 storage_specific_energy_wh_kg=70.0, battery_rt_eff=0.90),
     "supercap": dict(storage_cycles_100=5.0e5, storage_cycle_exponent=0.0, storage_calendar_life_yr=10.0,
                      storage_specific_energy_wh_kg=4.0, battery_rt_eff=0.95),
+    "supercap_bosc": dict(storage_cycles_100=4.5e6, storage_cycle_exponent=0.0, storage_calendar_life_yr=10.0,
+                          storage_specific_energy_wh_kg=2.56, battery_rt_eff=0.95),
 }
 
 
@@ -96,7 +108,7 @@ class ATPConfig:
 class ResourceConfig:
     """Power/thermal inputs for module 8. Duty cycle is an output, not an input.
 
-    Sources: research pass "Thermal and Power Parameters ..." (2026-11), see README.
+    Sources: research pass "Thermal and Power Parameters ..." (2026-11), see CLAUDE.md.
     Thermal architecture: laser head on an isothermal pumped two-phase loop
     (~20 C) dumping into a PCM store; the radiator runs ``radiator_dT_k`` below
     the store. One lumped node: sensible ``heat_capacity_j_k`` + latent plateau at

@@ -134,6 +134,7 @@ def evaluate_candidates(
     sub = population.elements[js]
     mu_l = np.ascontiguousarray(population.laser_areal_density(js), float)
     need = None
+    stride = max(1, int(pulse_stride))  # each predicted pulse stands for this many (melt cap)
     if state_error is not None:
         from .elements import elements_to_rv, rv_to_elements
         from .engagement import predict_bursts as _pb
@@ -143,7 +144,7 @@ def evaluate_candidates(
         r_d, v_d = states_at(sub, tp, epoch=population.epoch_s[js], adot=population.drag_adot(js))
         r_d = r_d + dr[None] + dv[None] * (tp - t0)[:, None, None]
         v_d = v_d + dv[None]
-        pred = _pb(r_s, r_d, v_d, active, las, mu_l, params)
+        pred = _pb(r_s, r_d, v_d, active, las, mu_l, params, pulse_weight=stride)
         ep = population.epoch_s[js]
         r0, v0 = elements_to_rv(propagate(sub, t0 - ep, adot=population.drag_adot(js)))
         est = rv_to_elements(r0 + dr, v0 + dv)
@@ -160,11 +161,14 @@ def evaluate_candidates(
             np.ascontiguousarray(js, np.int64), float(fluence(1.0, las)), th, opt, params.cm,
             params.cm_model == "plasma", params.plasma_exponent,
             params.eta1_nominal * float(np.cos(params.off_axis_mean_rad)),
-            mu_l, *elem_args)
+            mu_l,
+            (params.melt_fluence_sum(mu_l) / stride * (1 + 1e-12) if params.melt_cap
+             else np.full(len(mu_l), np.inf)),
+            *elem_args)
         pred = BurstPrediction(dvv, retro, nf, nf * las.pulse_energy_j)
     else:
         r_d, v_d = states_at(sub, tp, epoch=population.epoch_s[js], adot=population.drag_adot(js))
-        pred = predict_bursts(r_s, r_d, v_d, active, las, mu_l, params)
+        pred = predict_bursts(r_s, r_d, v_d, active, las, mu_l, params, pulse_weight=stride)
     if pulse_stride > 1:
         m = int(pulse_stride)
         pred = type(pred)(pred.dv_vec * m, pred.dv_retrograde * m, pred.n_fired * m, pred.optical_energy_j * m)

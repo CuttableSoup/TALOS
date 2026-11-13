@@ -11,11 +11,11 @@ Each design d runs twice (common random numbers: same population, same seed):
   * late sky: --resume the day-720 design checkpoint with --fresh-platforms, DAYS days.
 Design 000 is the current config/design.toml (control).
 
-Mission score (README "Next step"): a mission of life T yr sees the early sky for its first
+Mission score (README.md in git history, "Monte Carlo design search"): a mission of life T yr sees the early sky for its first
 year and the late sky after (pick: the 2-yr design run's removals peak in month 3 and are
 down ~5x by month 12), so debris-years/yr = (min(T,1) E + max(T-1,0) L) / T. Life T =
 min(design life, laser shot life, storage life) with storage damage rate weighted the same
-way, solved by fixed point. Storage cycle rating at both 0.5 M (datasheet) and 2.3 M (BOSC)
+way, solved by fixed point. Storage cycle rating at 0.5 M (datasheet), 2.3 M and 4.5 M (BOSC)
 cycles: with exponent 0 cycle damage scales as 1/rating, so no extra runs are needed.
 """
 
@@ -40,7 +40,7 @@ LEVERS = {
 }
 CONTROL = {"laser.burst_power_kw": 25.0, "resources.radiator_area_m2": 60.0, "resources.array_area_ft2": 1600.0,
            "resources.battery_capacity_kwh": 2.0, "resources.burst_s": 20.0, "resources.pcm_mass_kg": 25.0}
-CYCLE_RATINGS = (5.0e5, 2.3e6)
+CYCLE_RATINGS = (5.0e5, 2.3e6, 4.5e6)
 
 
 def parse_box(items: list[str]) -> dict:

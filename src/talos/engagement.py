@@ -64,6 +64,56 @@ class AblationParams:
     fragment_count_mean: float = 2.0
     fragment_size_frac: tuple[float, float] = (0.3, 0.7)
     fragment_dv_sigma_m_s: float = 5.0
+    # Target heating / melt gate (0 = off). ``thermal_coupling``: fraction of the incident
+    # fluence left in the target as heat (residual heat coefficient). A burst has melted its
+    # target when thermal_coupling * sum(phi) / mu reaches melt_margin * melt_enthalpy_j_kg
+    # (no cooling within a burst; heat does not carry over between bursts, which are days
+    # apart). Sourcing, none of it at 355 nm / 100 ps:
+    #   Scharring et al., Opt. Eng. 58(1) 011004 (2018), hydrodynamic simulation, aluminium,
+    #     1064 nm: <= 7 % for ablation with ULTRASHORT pulses, but 100 ps is grouped with the
+    #     longer pulses there ("laser pulses of 100 ps and longer"): 20 % and more near the
+    #     ablation onset, falling slowly with fluence. Experiments 60 fs - 6 us: typically
+    #     15-25 %, 10-40 % at the extremes.
+    #   Keil et al. 2023 (10 ns, 1064 nm, measured): 2-12.5 % by material and fluence.
+    #   So bracket 0.07 - 0.25, with 0.02 as the optimistic end.
+    # ``melt_enthalpy_j_kg``: aluminium from ~290 K to fully molten, c_p dT + L = 0.9 kJ/kg/K
+    # x 643 K + 397 kJ/kg ~ 976 kJ/kg; reaching the melting point alone (Scharring's
+    # criterion) is 579 kJ/kg, i.e. melt_margin = 0.59.
+    # ``melt_policy``: "fragment" fires the full burst and counts a molten target as a
+    # fragmentation event (same fragments as fragment_prob_per_burst); "cap" ends the burst
+    # at the last pulse that keeps the target below the limit (scheduler and fired burst).
+    thermal_coupling: float = 0.0
+    melt_enthalpy_j_kg: float = 976e3
+    melt_margin: float = 1.0
+    melt_policy: str = "fragment"
+
+    def __post_init__(self) -> None:
+        if self.melt_policy not in ("fragment", "cap"):
+            raise ValueError(f"melt_policy {self.melt_policy!r}: expected fragment or cap")
+        if not 0.0 <= self.thermal_coupling <= 1.0:
+            raise ValueError("thermal_coupling is a fraction of the incident fluence (0-1)")
+
+    def melt_fluence_sum(self, areal_density) -> np.ndarray:
+        """Summed fluence [J/m^2] that brings a target of ``areal_density`` [kg/m^2] to the
+        melt limit; inf with the gate off."""
+        mu = np.asarray(areal_density, float)
+        if self.thermal_coupling <= 0:
+            return np.full(mu.shape, np.inf)
+        return self.melt_margin * self.melt_enthalpy_j_kg * mu / self.thermal_coupling
+
+    @property
+    def melt_cap(self) -> bool:
+        """Bursts are cut short at the melt limit."""
+        return self.thermal_coupling > 0 and self.melt_policy == "cap"
+
+    @property
+    def melt_fragments(self) -> bool:
+        """Bursts that reach the melt limit shed fragments."""
+        return self.thermal_coupling > 0 and self.melt_policy == "fragment"
+
+    @property
+    def sheds_fragments(self) -> bool:
+        return self.fragment_prob_per_burst > 0 or self.melt_fragments
 
     def cm_scale_for(self, material) -> np.ndarray:
         """Per-object Cm scale from ORDEM class indices (-1 / unknown -> medium density)."""
@@ -158,8 +208,11 @@ class BurstResult:
     dv_vec: np.ndarray  # (3,) summed ECI dv [m/s]
     dv_retrograde: float  # sum over pulses of -dv . v_hat [m/s]; >0 lowers orbit
     n_fired: int
-    n_pulses: int
+    n_pulses: int  # pulses in the burst (up to the melt cap, if it cut the burst short)
     optical_energy_j: float  # energy of pulses actually fired
+    fluence_sum_j_m2: float = 0.0  # fluence delivered to the target, summed over the emitted pulses
+    heat_frac: float = 0.0  # absorbed heat / melt limit (>= 1: molten); 0 with the gate off
+    capped: bool = False  # the melt cap ended the burst early
 
 
 def integrate_burst(
@@ -180,12 +233,26 @@ def integrate_burst(
     are sampled per pulse (eta1 and deflection per burst with ``params.attitude_model = "per_burst"``).
     ``pointing_bias``: (2,) constant pointing offset [rad] for the burst (orbit-knowledge /
     centroiding error), added to the per-pulse jitter.
+    Melt gate (``params.thermal_coupling`` > 0): with ``melt_policy = "cap"`` the burst ends
+    at the last pulse that keeps the commanded (on-axis) fluence sum within the melt limit,
+    the worst case of every pulse landing centred (the platform cannot see where they land);
+    ``heat_frac`` is always from the fluence actually delivered, which pointing jitter
+    makes much smaller.
     """
     d = r_deb - r_sat
     R = np.linalg.norm(d, axis=-1)
-    u = d / R[:, None]  # push direction: away from the laser
     phi = fluence(R, laser)
+    limit = float(params.melt_fluence_sum(areal_density))
+    capped = False
+    if params.melt_cap:
+        n_ok = int(np.searchsorted(np.cumsum(np.where(phi >= params.threshold_fluence, phi, 0.0)),
+                                   limit * (1 + 1e-12), side="right"))
+        if n_ok < len(R):
+            capped = True
+            d, R, phi, v_deb = d[:n_ok], R[:n_ok], phi[:n_ok], v_deb[:n_ok]
+    u = d / R[:, None]  # push direction: away from the laser
     P = len(R)
+    commanded = phi >= params.threshold_fluence  # pulses the laser emits (on-axis fluence in range)
 
     if rng is None:
         # Expected value: random-azimuth deflection averages out, leaving cos(mean angle) along LOS.
@@ -222,12 +289,19 @@ def integrate_burst(
     dv_i = dv_mag[:, None] * dirs
     v_hat = v_deb / np.linalg.norm(v_deb, axis=-1, keepdims=True)
     n_fired = int(fire.sum())
+    # heat: every emitted pulse, including those that jitter leaves below the ablation
+    # threshold on target (they still heat it; Scharring 2018: residual heat is at its
+    # peak below threshold)
+    phi_sum = float(phi[commanded].sum())
     return BurstResult(
         dv_vec=dv_i.sum(axis=0),
         dv_retrograde=float(-np.sum(dv_i * v_hat)),
         n_fired=n_fired,
         n_pulses=P,
         optical_energy_j=n_fired * laser.pulse_energy_j,
+        fluence_sum_j_m2=phi_sum,
+        heat_frac=phi_sum / limit if np.isfinite(limit) else 0.0,
+        capped=capped,
     )
 
 
@@ -249,16 +323,22 @@ def predict_bursts(
     laser: LaserConfig,
     areal_density: np.ndarray,
     params: AblationParams = AblationParams(),
+    pulse_weight: float = 1.0,
 ) -> BurstPrediction:
     """Batched deterministic version of ``integrate_burst``.
 
     r_sat: (P, 3); r_deb, v_deb: (P, n, 3); active: (P, n) pulses inside each
     candidate's burst; areal_density: (n,). Matches ``integrate_burst(rng=None)``.
+    ``pulse_weight``: real pulses each row stands for (prediction stride), used by the melt
+    cap only; sums and counts are returned per row.
     """
     d = r_deb - r_sat[:, None, :]
     R = np.linalg.norm(d, axis=-1)
     phi = fluence(R, laser)
     fire = active & (phi >= params.threshold_fluence)
+    if params.melt_cap:
+        limit = params.melt_fluence_sum(areal_density) / pulse_weight
+        fire &= np.cumsum(np.where(fire, phi, 0.0), axis=0) <= limit[None, :] * (1 + 1e-12)
     cm = coupling_coefficient(phi, params)
     mag = np.where(fire, params.eta1_nominal * cm * phi / np.asarray(areal_density)[None, :], 0.0)
     mag = mag * np.cos(params.off_axis_mean_rad) / R  # fold LOS normalisation into the magnitude

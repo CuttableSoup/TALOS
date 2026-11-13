@@ -411,12 +411,13 @@ if HAVE_NUMBA:
 if HAVE_NUMBA:
 
     @nb.njit(cache=True)
-    def predict_kernel(tp, r_sat, t1, js, phi_k, th, opt, cm0, plasma, pexp, eta1_cos, mu,
+    def predict_kernel(tp, r_sat, t1, js, phi_k, th, opt, cm0, plasma, pexp, eta1_cos, mu, phi_max,
                        a0, adot, e, inc, raan0, raan_dot, argp0, argp_dot, M0, M_dot):
         """Batched deterministic burst prediction (engagement.predict_bursts) for candidates
         ``js`` (indices into the element arrays), pulses ``tp`` with sat positions ``r_sat``
         (P, 3); pulse p is active for candidate c while tp[p] < t1[c]. Fluence phi = phi_k / R^2.
-        Returns (dv_vec (n, 3), dv_retrograde (n,), n_fired (n,))."""
+        ``phi_max`` (n,): melt cap, the burst ends before the fired fluence sum exceeds it
+        (inf = no cap). Returns (dv_vec (n, 3), dv_retrograde (n,), n_fired (n,))."""
         P, n = tp.shape[0], js.shape[0]
         dv = np.zeros((n, 3))
         retro = np.zeros(n)
@@ -424,6 +425,7 @@ if HAVE_NUMBA:
         lr = math.log(opt / th)
         for c in range(n):
             j = js[c]
+            acc = 0.0
             for p in range(P):
                 if not tp[p] < t1[c] - 1e-9:
                     break
@@ -434,6 +436,9 @@ if HAVE_NUMBA:
                 phi = phi_k / (R * R)
                 if phi < th:
                     continue
+                acc += phi
+                if acc > phi_max[c]:
+                    break
                 if not plasma:
                     cm = cm0
                 elif phi <= opt:

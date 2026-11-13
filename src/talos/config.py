@@ -330,7 +330,10 @@ FRESH_MAY_DIFFER_SECTIONS = ("laser", "atp", "resources", "constellation", "cost
 FRESH_MAY_DIFFER = ("run.score", "run.stochastic", "run.predict_pulse_stride",
                     "dynamics.srp", "dynamics.srp_cr")  # SRP added 2026-11-11: may start at a restart
 # keys absent from older checkpoints, with the value that reproduces how those runs behaved
-_LEGACY = {"dynamics.srp": False, "dynamics.srp_cr": 1.2}
+_LEGACY = {"dynamics.srp": False, "dynamics.srp_cr": 1.2,
+           # melt gate added 2026-11-12, off by default
+           "ablation.thermal_coupling": 0.0, "ablation.melt_enthalpy_j_kg": 976e3,
+           "ablation.melt_margin": 1.0, "ablation.melt_policy": "fragment"}
 
 
 # sections newer than some checkpoints on disk; default values of these match "absent"

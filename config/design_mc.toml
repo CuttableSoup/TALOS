@@ -1,4 +1,4 @@
-# TALOS design candidate from the Monte Carlo design search (README "Monte Carlo design
+# TALOS design candidate from the Monte Carlo design search (README.md in git history, "Monte Carlo design
 # search", design b_d027): more radiator and array, a smaller supercap bank, longer bursts.
 # 30-day check on both mission phases: $541 vs $609 per debris-year (0.5 M cycles), $274 vs
 # $339 (2.3 M cycles) against config/design.toml. Every cost coefficient is a pick.

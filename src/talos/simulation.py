@@ -64,6 +64,7 @@ class EngagementEvent:
     argp_after_rad: float = float("nan")
     M_after_rad: float = float("nan")
     focus: bool = False  # target was in the campaign's focus set (talos.campaign)
+    heat_frac: float = 0.0  # absorbed heat / melt limit (ablation.thermal_coupling; 0 = gate off)
 
 
 @dataclass
@@ -230,7 +231,8 @@ def run_engagements(
     pop.cm_scale = np.asarray(params.cm_scale_for(pop.material), float)  # laser coupling by material
     pop0 = copy.deepcopy(pop)  # initial state of every object (incl. ones added later)
     pending: list[DebrisPopulation] = []  # ablation fragments, added at the next chunk start
-    frag_stats = {"ablation_fragmentations": 0, "ablation_fragments": 0}
+    # melt gate (params.thermal_coupling): bursts that reached the melt limit / cut short by the cap
+    frag_stats = {"ablation_fragmentations": 0, "ablation_fragments": 0, "melt_bursts": 0, "capped_bursts": 0}
     frag_idx: list[int] = []  # population indices of ablation fragments
     removed = np.zeros(len(pop), dtype=bool)
     decayed = np.zeros(len(pop), dtype=bool)
@@ -267,7 +269,7 @@ def run_engagements(
             raise ValueError("checkpoint was written with a different constellation")
         pop, pop0, removed, decayed, touched = r["pop"], r["pop0"], r["removed"], r["decayed"], r["touched"]
         c_start = r["c0"]
-        pending, frag_stats = r.get("pending", []), r.get("frag_stats", frag_stats)
+        pending, frag_stats = r.get("pending", []), {**frag_stats, **r.get("frag_stats", {})}
         frag_idx = list(r.get("frag_idx", []))
         if fresh:
             # new hardware over the same sky: platforms, resources and tallies start at the
@@ -471,13 +473,18 @@ def run_engagements(
                     jitter_rad=plat.atp.jitter_rad if rng is not None else 0.0, rng=rng,
                     pointing_bias=knowledge.pointing_bias() if knowledge is not None and rng is not None else None,
                 )
-                tm = 0.5 * (best.t_start + best.t_stop)
+                # the melt cap ends the burst (and its energy / heat / storage cycle) early
+                t_stop = best.t_start + res.n_pulses / plat.laser.prf_hz if res.capped else best.t_stop
+                frag_stats["capped_bursts"] += res.capped
+                tm = 0.5 * (best.t_start + t_stop)
                 ep = float(pop.epoch_s[j])
                 el_tm = propagate(pop.elements[j], tm - ep, adot=pop.drag_adot(j))
                 el_new = apply_dv(el_tm, res.dv_vec)
                 gone = bool(is_removed(el_new, pop.ballistic_coeff[j], tm))
-                if params.fragment_prob_per_burst > 0 and rng is not None \
-                        and rng.uniform() < params.fragment_prob_per_burst:
+                molten = params.melt_fragments and res.heat_frac >= 1.0
+                frag_stats["melt_bursts"] += molten
+                if rng is not None and (molten or (params.fragment_prob_per_burst > 0
+                                                   and rng.uniform() < params.fragment_prob_per_burst)):
                     f = _ablation_fragments(pop, j, el_new, tm, params, rng)
                     frag_stats["ablation_fragmentations"] += 1
                     if f is not None:
@@ -489,14 +496,14 @@ def run_engagements(
                 engaged.add(j)
                 touched[j] = True
                 if planner is not None:
-                    planner.record(j, res.dv_retrograde, best.t_stop, pop, removed)
+                    planner.record(j, res.dv_retrograde, t_stop, pop, removed)
 
-                fire = best.t_stop - best.t_start
+                fire = t_stop - best.t_start
                 fire_time[plat.name] += fire
                 rs.fire(fire)
                 ready_at[plat.name] = rs.t + rs.wait_for(ready_s[plat.name])
                 events.append(EngagementEvent(
-                    platform=plat.name, debris_index=j, t_start=best.t_start, t_stop=best.t_stop,
+                    platform=plat.name, debris_index=j, t_start=best.t_start, t_stop=t_stop,
                     n_pulses=res.n_pulses, n_fired=res.n_fired, dv_retrograde=res.dv_retrograde,
                     dv_norm=float(np.linalg.norm(res.dv_vec)), optical_energy_j=res.optical_energy_j,
                     perigee_alt_before_m=float(el_tm.rp - R_EARTH),
@@ -504,6 +511,7 @@ def run_engagements(
                     t_elements_s=float(tm), a_after_m=float(el_new.a), e_after=float(el_new.e),
                     i_after_rad=float(el_new.i), raan_after_rad=float(el_new.raan),
                     argp_after_rad=float(el_new.argp), M_after_rad=float(el_new.M), focus=is_focus,
+                    heat_frac=res.heat_frac,
                 ))
                 k = int(np.searchsorted(t, ready_at[plat.name]))
         if on_chunk is not None:
@@ -513,7 +521,7 @@ def run_engagements(
     if pending:  # fragments from the last chunk
         flush_pending()
     res_frag = None
-    if shells is not None and params.fragment_prob_per_burst > 0:
+    if shells is not None and params.sheds_fragments:
         res_frag = np.zeros(len(names))
         if frag_idx:
             fi = np.array(frag_idx)
@@ -566,7 +574,7 @@ def run_engagements(
             "heater_kwh_per_day": float(np.mean([s.heater_j for s in sts])) / 3.6e6 * 86400.0 / span,
             "brownout_s": float(np.mean([s.brownout_s for s in sts])),
         }
-    pop_stats = dict(frag_stats) if params.fragment_prob_per_burst > 0 else {}
+    pop_stats = dict(frag_stats) if params.sheds_fragments or params.melt_cap else {}
     if dynamics is not None:
         live = int((~(removed | decayed)).sum())
         dstats = {k: v - dyn_stats0.get(k, 0) for k, v in dynamics.stats.items()}

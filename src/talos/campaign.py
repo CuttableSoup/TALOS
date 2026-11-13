@@ -1,7 +1,7 @@
 """Focus campaign: concentrate bursts on a fixed set of large objects.
 
 Every mission eventually faces the large, heavy debris: once the light tail is gone
-(README "2-year design run"), what is left is mu >= 2 kg/m^2, and greedy scheduling spreads
+(README.md in git history, "2-year design run"), what is left is mu >= 2 kg/m^2, and greedy scheduling spreads
 its bursts over hundreds of such objects (~5 m/s each per month against ~150 m/s needed),
 so none are removed. A campaign picks a focus set at the start of the run (for a
 fresh-platform restart: at the restart) and gives it priority:
@@ -11,7 +11,7 @@ fresh-platform restart: at the restart) and gives it priority:
 * every focus burst must predict >= ``min_impulse_frac`` x the impulse of a full burst at the
   Cm-peak fluence, or the platform waits for the range to close. With a small set the
   platforms are opportunity-limited (an object is engaged at most once per chunk), so a strict
-  gate trades away more passes than it gains per burst: 0.15 (README "Large-debris test").
+  gate trades away more passes than it gains per burst: 0.15 (README.md in git history, "Large-debris test").
 * ``exclusive = false``: a focus candidate is taken whenever its predicted impulse per area
   (dv x mu, i.e. burst geometry, independent of the object's mass) is at least
   ``quality`` x the best candidate's; otherwise the run's normal score applies.

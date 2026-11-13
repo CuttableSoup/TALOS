@@ -144,7 +144,7 @@ cm_scale_hd = 1.0              # high density (steel, copper)
 cm_scale_in = 1.0              # intact objects
 fragment_prob_per_burst = 0.0  # [guess] probability a burst fragments the target (0 = off). No published
                                # value: NASA OTPS 2024 and JAXA 2023 both say no systematic data exist.
-                               # See README "Sourcing pass 2" for the derived melt-per-burst bound.
+                               # The melt gate (thermal_coupling, CLAUDE.md) gives a physical bound.
 fragment_count_mean = 2.0      # [pick] fragments >= 1 cm per fragmentation (Poisson)
 fragment_dv_sigma_m_s = 5.0    # [pick] per-axis fragment dv spread
 

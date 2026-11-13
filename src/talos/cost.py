@@ -21,7 +21,7 @@ year x life), debris-years being the summed reduction in orbital lifetime. Cost 
 (credited) removal is kept, but it misleads across mission phases: late in a
 mission most removals finish objects already lowered (little lifetime left, not
 credited) while heavy objects carry long lifetimes, so per removal the late phase
-looked ~85x dearer than the early one and per debris-year ~2x (README, "Hardware
+looked ~85x dearer than the early one and per debris-year ~2x (README.md in git history, "Hardware
 against the depleted sky"). Rates are the run's own annualised rates: a 30-day
 run sees only the light-target phase, so compare designs over both phases
 (early sky and a depleted checkpoint, run_baseline.py --fresh-platforms).

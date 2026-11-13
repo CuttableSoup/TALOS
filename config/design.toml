@@ -1,5 +1,5 @@
 # TALOS design baseline: the cheapest-per-removal point from the burst x storage x
-# radiator sweep (README "Burst length x energy storage x cost per removal", variant
+# radiator sweep (README.md in git history, "Burst length x energy storage x cost per removal", variant
 # r60_sc2_b20): 60 m2 radiator, 2 kWh supercapacitor buffer, 20 s bursts.
 #
 # Inherits every value from baseline.toml; only the differences are listed here.
@@ -17,7 +17,7 @@ burst_s = 20.0                 # [pick] best of 10 / 20 / 25 / 32 / 48 s with th
 battery_capacity_kwh = 2.0     # [pick] supercapacitor bank (~500 kg at 4 Wh/kg)
 # supercapacitor storage (talos.platform.STORAGE_PRESETS["supercap"])
 storage_cycles_100 = 5.0e5     # [sourced] Maxwell 160V 10F: 500,000 cycles VR -> VR/2 at 25 C (-20 % C);
-                               # space bank (Airbus/ESA BOSC) > 2.3e6 demonstrated: sweep 5e5-2.3e6
+                               # space bank (Airbus/ESA BOSC) 4.5e6 demonstrated at 45 C: sweep 5e5-4.5e6
 storage_cycle_exponent = 0.0   # [sourced, weak] EDLC life governed by voltage + temperature (Maxwell);
                                # no cycle-depth data found, so every burst counts as one cycle
 storage_calendar_life_yr = 10.0  # [sourced] Maxwell 160V 10F projected life at VR, 25 C

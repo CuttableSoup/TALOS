@@ -60,7 +60,7 @@ class Replay:
     """The run's population history, rebuilt from the scenario + event log."""
 
     def __init__(self, sc: Scenario, ev, checkpoint=None):
-        if sc.ablation.fragment_prob_per_burst > 0:
+        if sc.ablation.sheds_fragments:
             raise NotImplementedError("playback of runs with ablation fragmentation is not supported")
         self.sc, self.ev = sc, ev
         b = build(sc)

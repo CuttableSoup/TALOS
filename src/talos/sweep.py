@@ -197,7 +197,7 @@ def run_sweep(
 
 
 def readme_matrix(base: RunConfig = RunConfig(name="base"), **axes_override) -> list[RunConfig]:
-    """The README sweep: power x sats x orbit config x Cm x mu. Axis keys are dotted
+    """The original sweep matrix: power x sats x orbit config x Cm x mu. Axis keys are dotted
     scenario keys; pass ``axes_override={...}`` entries to replace or add axes."""
     axes = {
         "laser.burst_power_kw": [5.0, 10.0, 20.0, 30.0, 50.0],
@@ -219,7 +219,7 @@ def readme_matrix(base: RunConfig = RunConfig(name="base"), **axes_override) -> 
     return out
 
 
-# Uncertain inputs (README Placeholders): key -> (lo, hi[, "log"]). Ranges are the
+# Uncertain inputs (CLAUDE.md "Inputs and their basis"): key -> (lo, hi[, "log"]). Ranges are the
 # sourced ranges where the table gives one, otherwise picks around the baseline.
 UNCERTAIN_INPUTS: dict[str, tuple] = {
     "laser.eta2": (0.30, 0.67),

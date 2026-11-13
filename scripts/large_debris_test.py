@@ -12,7 +12,7 @@ run (the light tail is gone) and runs a focus campaign (talos.campaign) on the l
 ``--count N`` draws N of them instead, ``--seeds`` for different draws): exclusive by default (fire only at the
 focus set: what the design can do to large debris when it devotes itself to them), or
 ``--mixed`` (focus first when its burst geometry is >= 0.5 x the best, otherwise normal
-targets; rarely picks a focus object, see README).
+targets; rarely picks a focus object, see README.md in git history).
 Wall time: ~5 min per design for 30 days at 8 threads (screening covers the focus set only).
 
 Reports per design: focus objects removed, half-way, mean progress (fraction of the dv

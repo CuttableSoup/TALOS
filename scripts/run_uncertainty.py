@@ -1,4 +1,4 @@
-"""Latin-hypercube uncertainty sweep over the README placeholder ranges (roadmap 7).
+"""Latin-hypercube uncertainty sweep over the CLAUDE.md input ranges (roadmap 7).
 
     python scripts/run_uncertainty.py N DAYS [--out runs/uncertainty] [--jobs 4] [--toy]
 
