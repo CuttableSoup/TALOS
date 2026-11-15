@@ -46,11 +46,14 @@ if __name__ == "__main__":  # required on Windows (spawned workers re-import thi
     ap.add_argument("--resume", default=None, help="checkpoint .pkl to continue (or extend) from")
     ap.add_argument("--fresh-platforms", action="store_true",
                     help="with --resume: keep only the population; new platforms from --config/--set")
+    ap.add_argument("--strict-resume", action="store_true",
+                    help="with --resume: refuse a checkpoint written by another commit, a dirty tree "
+                         "or different data tables (default: warn)")
     ap.add_argument("--render-days", type=float, default=0.0, help="write a 3D playback of this many days")
     ap.add_argument("--render-at", choices=("first", "last", "both"), default="first")
     a = ap.parse_args()
     cfg = RunConfig(a.name, config=a.config, overrides={"run.duration_days": a.days, **parse_set(a.sets)},
-                    resume=a.resume, fresh_platforms=a.fresh_platforms)
+                    resume=a.resume, fresh_platforms=a.fresh_platforms, strict_resume=a.strict_resume)
     df = run_sweep([cfg], out_dir=a.out, n_jobs=1, threads_per_job=a.threads)
     print(df.T.to_string())
     if a.render_days > 0:

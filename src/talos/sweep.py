@@ -5,7 +5,8 @@ worker the numba kernels use ``threads_per_job`` threads. The default split uses
 every logical core: n_jobs * threads_per_job = os.cpu_count().
 
 Outputs (in ``out_dir``):
-  * summaries/<name>.parquet: one row per run (config + SimResult.summary() + cost);
+  * summaries/<name>.parquet: one row per run (config + SimResult.summary() + cost +
+    ``prov.*`` provenance columns: commit, dirty flag, config hash, data-table hashes);
     summary.parquet: all runs in the folder, rebuilt from those (so separate processes
     writing into one folder add rows instead of overwriting each other).
   * events/<name>.parquet: per-engagement event log for playback/analysis.
@@ -42,6 +43,7 @@ class RunConfig:
     overrides: Mapping[str, Any] = field(default_factory=dict)
     resume: str | None = None  # checkpoint to continue from (see run_scenario)
     fresh_platforms: bool = False  # with resume: keep only the population, new platforms
+    strict_resume: bool = False  # with resume: refuse a checkpoint from other code / data tables
 
     def scenario(self) -> Scenario:
         return load_scenario(self.config, {"run.name": self.name, **self.overrides})
@@ -99,13 +101,14 @@ def run_one(cfg: RunConfig, out_dir: str | os.PathLike | None = None) -> tuple[d
         (Path(out_dir) / "checkpoints").mkdir(parents=True, exist_ok=True)
         ckpt = Path(out_dir) / "checkpoints" / f"{cfg.name}.pkl"
     res = run_scenario(sc, on_chunk=mon, checkpoint_path=ckpt, resume_path=cfg.resume,
-                       fresh_platforms=cfg.fresh_platforms)
+                       fresh_platforms=cfg.fresh_platforms, strict_resume=cfg.strict_resume)
     ev_c = [e for e in res.events if e.committed]
     row = {"name": cfg.name, "config": cfg.config or "baseline",
            **{f"ovr.{k}": (str(v) if isinstance(v, (tuple, list)) else v) for k, v in cfg.overrides.items()},
            **res.summary(), **{f"planner_{k}": v for k, v in res.planner_stats.items()},
            "committed_engagement_frac": len(ev_c) / max(len(res.events), 1),
-           "wall_s": time.perf_counter() - t0}
+           "wall_s": time.perf_counter() - t0,
+           **{f"prov.{k}": v for k, v in res.provenance.items()}}
     from . import cost, risk
 
     row |= risk.evaluate(sc, row)
@@ -229,6 +232,18 @@ UNCERTAIN_INPUTS: dict[str, tuple] = {
     "resources.wallplug_eff": (0.04, 0.17, "log"),
     "atp.sun_exclusion_deg": (30.0, 45.0),
     "atp.settle_s": (2.0, 10.0),  # guess
+}
+
+# Inputs that decide whether the laser is a net benefit, on top of UNCERTAIN_INPUTS. Kept
+# separate so earlier LHS runs stay comparable (scripts/run_uncertainty.py --response).
+# The melt gate needs a policy: pass ``ablation.melt_policy`` (and ``melt_margin`` for
+# "cap") in the base overrides; "cap" with margin 3 is the variant that kept removals.
+RESPONSE_INPUTS: dict[str, tuple] = {
+    **UNCERTAIN_INPUTS,
+    "ablation.cm_n_per_mw": (50.0 / 3.0, 100.0, "log"),  # low end: rep-rated pulses up to 3x less (NASA OTPS 2024)
+    "ablation.cm_scale_md": (0.5, 1.0),  # aluminium 10-40 N/MW at ns (Keil 2023) vs the 50 N/MW peak
+    "ablation.fragment_prob_per_burst": (0.0, 0.01),  # guess: no published probability
+    "ablation.thermal_coupling": (0.07, 0.25),  # bracket (Scharring 2018); unsourced at 355 nm / 100 ps
 }
 
 

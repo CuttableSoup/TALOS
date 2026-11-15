@@ -98,6 +98,8 @@ class SimResult:
     focus_idx: np.ndarray | None = field(default=None, repr=False)
     focus_need0: np.ndarray | None = field(default=None, repr=False)
     focus_need1: np.ndarray | None = field(default=None, repr=False)
+    # talos.provenance.collect(scenario): commit, config hash, data-table hashes, versions
+    provenance: dict = field(default_factory=dict)
 
     def records(self) -> list[dict]:
         return [asdict(e) for e in self.events]

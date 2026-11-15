@@ -15,6 +15,7 @@ from __future__ import annotations
 import dataclasses
 import tomllib
 import typing
+import warnings
 from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -348,7 +349,7 @@ def _may_differ(key: str, fresh: bool) -> bool:
 
 
 def run_scenario(sc: Scenario, on_chunk=None, checkpoint_path=None, resume_path=None,
-                 fresh_platforms: bool = False):
+                 fresh_platforms: bool = False, strict_resume: bool = False):
     """Install the scenario atmosphere, build, run, restore the previous atmosphere.
 
     ``checkpoint_path``: write full-state checkpoints there every ``run.checkpoint_s``.
@@ -356,13 +357,30 @@ def run_scenario(sc: Scenario, on_chunk=None, checkpoint_path=None, resume_path=
     wrote it apart from RESUME_MAY_DIFFER (e.g. extend a 1-yr run to 2 yr).
     ``fresh_platforms``: continue only the population from the checkpoint, with new
     platforms built from this scenario (laser / ATP / resources / constellation / ablation may
-    differ); tallies and rates cover [checkpoint time, run.duration_s] only."""
+    differ); tallies and rates cover [checkpoint time, run.duration_s] only.
+
+    The result carries ``provenance`` (talos.provenance.collect: commit, config hash, data
+    table hashes, versions), which is also stored in each checkpoint. Resuming a checkpoint
+    written by a different commit, a dirty tree or different data tables warns, or raises
+    with ``strict_resume``; checkpoints older than the provenance stamp resume silently."""
     from .propagator import get_atmosphere, set_atmosphere
     from .simulation import load_checkpoint, run_engagements
 
+    from . import provenance
+
+    prov = provenance.collect(sc)
     resume = None
     if resume_path is not None:
         resume = load_checkpoint(resume_path)
+        old_prov = resume["meta"].get("provenance")  # absent in checkpoints written before 2026-11-14
+        prov["resumed_from_git_sha"] = old_prov.get("git_sha") if old_prov else "unknown"
+        change = provenance.describe_change(old_prov, prov) if old_prov else ""
+        prov["resumed_code_changed"] = bool(change) if old_prov else None
+        if change:
+            msg = f"checkpoint {resume_path} cannot be matched to this code and data ({change})"
+            if strict_resume:
+                raise ValueError(msg + "; pass strict_resume=False to resume anyway")
+            warnings.warn(msg + ": the resumed run may not reproduce the uninterrupted one", stacklevel=2)
         old, new = resume["meta"].get("scenario", {}), scenario_dict(sc)
         diff = sorted(k for k in set(old) | set(new)
                       if not _may_differ(k, fresh_platforms) and old.get(k, _LEGACY.get(k)) != new.get(k)
@@ -382,13 +400,16 @@ def run_scenario(sc: Scenario, on_chunk=None, checkpoint_path=None, resume_path=
     set_atmosphere(make_atmosphere(sc))
     try:
         b = build(sc)
-        return run_engagements(b.platforms, b.population, sc.run.duration_s, dt=sc.run.dt_s,
-                               chunk_s=sc.run.chunk_s, params=b.params, rng=b.rng, score=sc.run.score,
-                               planner=b.planner, env=b.env, dynamics=b.dynamics,
-                               on_chunk=on_chunk, risk_shells=sc.risk.shells(),
-                               checkpoint_path=checkpoint_path, checkpoint_every_s=sc.run.checkpoint_s,
-                               checkpoint_meta={"scenario": scenario_dict(sc)}, resume=resume,
-                               predict_pulse_stride=sc.run.predict_pulse_stride, knowledge=b.knowledge,
-                               campaign=sc.campaign)
+        res = run_engagements(b.platforms, b.population, sc.run.duration_s, dt=sc.run.dt_s,
+                              chunk_s=sc.run.chunk_s, params=b.params, rng=b.rng, score=sc.run.score,
+                              planner=b.planner, env=b.env, dynamics=b.dynamics,
+                              on_chunk=on_chunk, risk_shells=sc.risk.shells(),
+                              checkpoint_path=checkpoint_path, checkpoint_every_s=sc.run.checkpoint_s,
+                              checkpoint_meta={"scenario": scenario_dict(sc), "provenance": prov},
+                              resume=resume,
+                              predict_pulse_stride=sc.run.predict_pulse_stride, knowledge=b.knowledge,
+                              campaign=sc.campaign)
+        res.provenance = prov
+        return res
     finally:
         set_atmosphere(prev)

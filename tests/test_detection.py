@@ -10,6 +10,10 @@ from talos.population import toy_population
 from talos.screening import apparent_magnitude, screen_windows, track_mask
 from talos.sun import SunConfig, SunEnvironment
 
+from talos import _kernels as _k
+
+needs_numba = pytest.mark.skipif(not _k.HAVE_NUMBA, reason="compares the numba kernel with numpy")
+
 
 def test_magnitude_of_reference_sphere():
     """5 cm sphere, albedo 0.1, 500 km, phase 90 deg: ~13.9 mag (hand calc)."""
@@ -62,11 +66,13 @@ def windows(sat, pop, t, sun, kernel):
     return [(w.debris_index, w.start, w.stop) for w in screen_windows(sat, pop, t, sun_hat=sun, use_kernel=kernel)]
 
 
+@needs_numba
 def test_kernel_matches_numpy_with_detection():
     sat, pop, t, sun = setup()
     assert windows(sat, pop, t, sun, True) == windows(sat, pop, t, sun, False)
 
 
+@needs_numba
 def test_detection_reduces_windows_and_favours_large_objects():
     sat, pop, t, sun = setup()
     ideal = windows(replace(sat, atp=replace(sat.atp, detection_model="ideal")), pop, t, sun, True)

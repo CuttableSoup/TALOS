@@ -1,24 +1,34 @@
 """Latin-hypercube uncertainty sweep over the CLAUDE.md input ranges (roadmap 7).
 
     python scripts/run_uncertainty.py N DAYS [--out runs/uncertainty] [--jobs 4] [--toy]
+        [--response [--melt-policy cap --melt-margin 3]] [--config path.toml]
 
 Prints 5/50/95 % bands of the headline metrics and the Spearman rank correlation of
 each input with each metric. ``--toy`` uses the toy population (no ORDEM table needed).
+``--response`` samples talos.sweep.RESPONSE_INPUTS instead: the same inputs plus a wider Cm
+range, the medium-density Cm scale, fragmentation per burst and thermal coupling (melt gate,
+with ``--melt-policy`` / ``--melt-margin``). Compare bands only at equal DAYS; a short run
+is not an annual rate.
 """
 
 import argparse
 
-from talos.sweep import RunConfig, lhs_matrix, run_sweep, uncertainty_bands
+from talos.sweep import RESPONSE_INPUTS, RunConfig, lhs_matrix, run_sweep, uncertainty_bands
 
 METRICS = ["useful_engagements_per_hr_per_sat", "mean_dv_retro_per_engagement", "duty_cycle_mean",
-           "removed_per_yr", "debris_years_removed_per_yr"]
+           "removed_per_yr", "debris_years_removed_per_yr", "cost_per_debris_year_usd", "net_change_per_yr"]
 
 
-def main(n: int, days: float, out: str, jobs: int, toy: bool, seed: int) -> None:
+def main(n: int, days: float, out: str, jobs: int, toy: bool, seed: int, response: bool = False,
+         melt_policy: str = "cap", melt_margin: float = 3.0, config: str | None = None) -> None:
     ovr = {"run.duration_days": days}
+    ranges = None
+    if response:
+        ranges = RESPONSE_INPUTS
+        ovr |= {"ablation.melt_policy": melt_policy, "ablation.melt_margin": melt_margin}
     if toy:
         ovr |= {"population.kind": "toy", "population.areal_density_model": "sbm"}
-    cfgs = lhs_matrix(n, base=RunConfig("lhs", overrides=ovr), seed=seed)
+    cfgs = lhs_matrix(n, ranges, base=RunConfig("lhs", config=config, overrides=ovr), seed=seed)
     df = run_sweep(cfgs, out_dir=out, n_jobs=jobs, threads_per_job=max(1, 32 // jobs))
     bands, corr = uncertainty_bands(df, METRICS)
     print(bands.to_string(float_format=lambda x: f"{x:,.3f}"))
@@ -36,5 +46,10 @@ if __name__ == "__main__":  # required: Windows spawns workers by re-importing t
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--toy", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--response", action="store_true", help="sample RESPONSE_INPUTS (adds fragmentation, "
+                    "thermal coupling, wider Cm, cm_scale_md)")
+    ap.add_argument("--melt-policy", choices=("fragment", "cap"), default="cap")
+    ap.add_argument("--melt-margin", type=float, default=3.0)
+    ap.add_argument("--config", default=None)
     a = ap.parse_args()
-    main(a.n, a.days, a.out, a.jobs, a.toy, a.seed)
+    main(a.n, a.days, a.out, a.jobs, a.toy, a.seed, a.response, a.melt_policy, a.melt_margin, a.config)

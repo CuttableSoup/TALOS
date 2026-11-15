@@ -92,3 +92,17 @@ def test_uncertainty_bands_rank_correlation():
     bands, corr = uncertainty_bands(df, ["m"])
     assert bands.loc["m", "q50"] == np.median(3 * x + 1)
     assert corr.loc["a", "m"] == 1.0 and abs(corr.loc["b", "m"]) < 0.5 and "run.seed" not in corr.index
+
+
+def test_response_inputs_extend_the_uncertain_set_and_load():
+    from talos.sweep import RESPONSE_INPUTS, UNCERTAIN_INPUTS, lhs_matrix
+
+    assert set(UNCERTAIN_INPUTS) < set(RESPONSE_INPUTS)
+    m = lhs_matrix(4, RESPONSE_INPUTS, RunConfig("r", overrides={"ablation.melt_policy": "cap",
+                                                                 "ablation.melt_margin": 3.0}), seed=2)
+    for c in m:  # every sampled key is a real scenario key, inside its range
+        sc = c.scenario()
+        assert 0.0 <= sc.ablation.fragment_prob_per_burst <= 0.01
+        assert 0.07 <= sc.ablation.thermal_coupling <= 0.25 and sc.ablation.melt_policy == "cap"
+        assert 0.5 <= sc.ablation.cm_scale_md <= 1.0
+        assert 50.0 / 3.0 <= c.overrides["ablation.cm_n_per_mw"] <= 100.0

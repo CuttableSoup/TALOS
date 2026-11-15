@@ -9,6 +9,10 @@ from talos.resources import ResourceState
 from talos.screening import screen_windows
 from talos.sun import AU, SunConfig, SunEnvironment, julian_date, lit_fraction, sun_vector, target_lit
 
+from talos import _kernels as _k
+
+needs_numba = pytest.mark.skipif(not _k.HAVE_NUMBA, reason="compares the numba kernel with numpy")
+
 
 def env_at(date: str, **kw) -> SunEnvironment:
     return SunEnvironment(SunConfig(**kw), datetime.fromisoformat(date + "T00:00:00+00:00"))
@@ -87,6 +91,7 @@ def test_battery_drains_in_eclipse():
     assert rs.brownout_s == 0.0
 
 
+@needs_numba
 def test_sun_gates_remove_windows():
     env = env_at("2026-12-21")
     sat = baseline_platform(800.0, raan_rad=env.raan_for_ltan(6.0))

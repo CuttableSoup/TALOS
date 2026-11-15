@@ -26,11 +26,15 @@ up to 2026-11-12) and under `runs/` (gitignored).
 
 ## Setup and commands
 - `pip install -e .[dev]` (+ `numba`, `pyarrow`). Without the install, set `PYTHONPATH=src`.
-- Tests: `pytest` (~1 min). `TALOS_NUMBA=0` runs the numpy fallback. DAS tests skip
-  without DAS.
+- Tests: `pytest` (~1 min). `TALOS_NUMBA=0` runs the numpy fallback (~5 min). DAS tests
+  skip without DAS. CI (`.github/workflows/tests.yml`) runs both paths on Linux and Windows,
+  Python 3.11–3.13, and builds the F10.7 table from ESA's public `fap_mon.dat`.
+- Golden run: `tests/test_golden.py` compares a 4 h toy run with `tests/golden/*.csv`
+  (discrete columns exact, floats to 1e-9). When a change is meant to move results, rebuild
+  with `TALOS_REGOLDEN=1 pytest tests/test_golden.py` and commit the CSVs with the change.
 - Single run: `python scripts/run_baseline.py DAYS --out runs/x [--config path.toml]
-  [--set section.key=value ...] [--threads N] [--resume ckpt.pkl [--fresh-platforms]]
-  [--render-days 1]`
+  [--set section.key=value ...] [--threads N] [--resume ckpt.pkl [--fresh-platforms]
+  [--strict-resume]] [--render-days 1]`
 - In code: `talos.config.load_scenario(path, overrides)` → `run_scenario(sc)`;
   sweeps: `RunConfig(name, config=None, overrides={...})`, `run_sweep(cfgs, "runs/x")`.
 - Speed: a 1-yr run is ~1 h; ~10 s per sim day. Runs do not scale past ~8 threads, so
@@ -40,6 +44,10 @@ up to 2026-11-12) and under `runs/` (gitignored).
   `run.checkpoint_days`. `--resume` continues or extends a run and reproduces the
   uninterrupted run exactly. `--fresh-platforms` keeps only the population and starts new
   hardware over it (tallies count from the restart).
+- Provenance: every summary row has `prov.*` columns (git SHA, dirty flag, resolved-config
+  hash, seed, `eta1_basis`, data-table hashes, versions) and every checkpoint stores the
+  same. Resuming a checkpoint from another commit, a dirty tree or other data tables warns;
+  `--strict-resume` refuses. Commit before a run that will be quoted, so `git_dirty` is false.
 - Run at full density (N = n_real). Engagement and removal counts are not weight-scaled,
   and subsampling is invalid for a target-saturated platform.
 
@@ -58,6 +66,7 @@ up to 2026-11-12) and under `runs/` (gitignored).
 | `simulation` | the run loop, events, checkpoints |
 | `knowledge`, `risk`, `survival`, `cost`, `metrics` | orbit-knowledge error, shell residence / collisions, platform impacts, mass / life / cost, summaries |
 | `sweep`, `config` | parallel sweep driver, Latin hypercube; TOML scenarios |
+| `provenance` | git SHA, config hash and data-table hashes stamped on rows and checkpoints |
 | `das`, `oscar` | lifetime cross-checks against NASA DAS and ESA DRAMA/OSCAR |
 | `render`, `viewer/` | exact population replay and the CesiumJS playback page |
 | `_kernels` | numba kernels (screening, prediction, resources, lifetime) |
@@ -140,6 +149,7 @@ up to 2026-11-12) and under `runs/` (gitignored).
 | Station keeping | `[cost] drag_*`, `sk_*` | drag make-up costed, Hall Isp 1500 s | picks; negligible (< 1 m/s) |
 | Platform impacts | `[survival]` | lethal ≥ 1 cm on 10 m² bus; radiator puncture ≥ 1 mm on 10 % of area, zenith / nadir faces | 1 cm **sourced** (weak); rest picks |
 | Uncertainty ranges | `talos.sweep.UNCERTAIN_INPUTS` | η₂, Cm, η₁, thrust angle, wall-plug, sun exclusion, settle | sourced ranges where the table has one, else picks |
+| Response ranges | `talos.sweep.RESPONSE_INPUTS` (`run_uncertainty.py --response`) | the above, with Cm 16.7–100 N/MW, `cm_scale_md` 0.5–1, fragmentation 0–1 %/burst, thermal coupling 0.07–0.25 | brackets from the rows above; not yet run on the ORDEM sky |
 
 ## Validation gates
 | Gate | Status |
@@ -199,16 +209,17 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
 - Results are one seed per variant unless stated.
 
 ## Next steps
-- Melt gate: jitter-aware cap (expected delivered fluence); `thermal_coupling` 0.07–0.25
-  and the policy as a band in the Latin hypercube; a fragment charge in cost per
+- Melt gate: jitter-aware cap (expected delivered fluence); a fragment charge in cost per
   debris-year; 30-day runs and seeds.
+- Run the response bands on the ORDEM sky (`run_uncertainty.py N 30 --response`, once per
+  melt policy; overnight). The ranges are in `RESPONSE_INPUTS`; the μ model is still a
+  separate comparison.
 - Supercap bank: confirm the BOSC test voltage and depth from the paper itself, then set
   the specific energy for the 4.5 M rating.
 - Seeds on the leading designs (control, d027, d002, d007, d012).
 - Whole-mission run of d027 (`config/design_mc.toml`, 2 years, checkpointed; overnight),
   scored per debris-year; decide whether to size the mission to the light inventory (~2 yr).
-- Carry `cm_scale_md` 0.5–1, fragmentation 0–1 % and the μ model in the uncertainty bands.
-  Measurements to ask for: aluminium Cm and thermal coupling at 355 nm / 100 ps.
+- Measurements to ask for: aluminium Cm and thermal coupling at 355 nm / 100 ps.
 - Storage sized for life with average power; Δv per burst on μ ≥ 2 targets.
 - Platform placement / reconfiguration for the late mission (retarget altitude or RAAN at
   a checkpoint before any optimiser).
@@ -216,5 +227,7 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
 - Debris lifetimes with SRP; absolute pointing budget; PROOF albedo on by default.
 - Validation: orekit / STELA propagation check, MASTER population cross-check, ODPO vs
   ESA F10.7.
-- Repo: no LICENSE, CI or user-facing README yet.
+- Repo: no LICENSE or user-facing README yet. The CI workflow has not run on GitHub yet
+  (first push will show whether Linux reproduces the golden run to 1e-9). Gate-4 and DAS
+  comparison tables are not committed as CSV fixtures.
 - Admin: Space-Track.org registration; consider contacting WVU (Hang Woon Lee lab).

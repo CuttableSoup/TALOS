@@ -13,6 +13,10 @@ from talos.lifetime import decay_rates
 from talos.propagator import drag_da_dt, propagate, states_at
 from talos.render import _with_atmosphere
 
+from talos import _kernels as _k
+
+needs_numba = pytest.mark.skipif(not _k.HAVE_NUMBA, reason="compares the numba kernel with numpy")
+
 
 def _pop(n=400, seed=1):
     rng = np.random.default_rng(seed)
@@ -34,6 +38,7 @@ def test_rate_is_the_daily_steps_orbit_average():
     assert np.all(want[ecc] < circ[ecc])
 
 
+@needs_numba
 def test_cache_paths_agree_and_invalidate():
     p = _pop()
     t = np.linspace(0, 6 * 3600, 7)

@@ -15,6 +15,10 @@ from talos.population import toy_population
 from talos.propagator import drag_da_dt, exponential_density, get_atmosphere, set_atmosphere, states_at
 from talos.simulation import run_engagements
 
+from talos import _kernels as _k
+
+needs_numba = pytest.mark.skipif(not _k.HAVE_NUMBA, reason="compares the numba kernel with numpy")
+
 
 @pytest.fixture
 def msis():
@@ -66,6 +70,7 @@ def test_lifetime_depends_on_start_in_cycle(msis):
     assert at_min > at_max  # starting into solar minimum lives longer
 
 
+@needs_numba
 def test_per_object_epoch_kernel_matches_numpy():
     rng = np.random.default_rng(0)
     pop = toy_population(3000, rng)

@@ -1,0 +1,45 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    name: ${{ matrix.os }} / py${{ matrix.python }} / ${{ matrix.kernels }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.12", "3.13"]
+        kernels: [numba, numpy]
+    env:
+      # numpy = the pure-numpy fallback path; both paths must reproduce tests/golden
+      TALOS_NUMBA: ${{ matrix.kernels == 'numba' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: python -m pip install -e ".[dev,sweep,fast,ordem]"
+      # The default atmosphere reads ESA's monthly F10.7 series, which is not in git.
+      # ORDEM, DAS and the platform flux table (NASA SUA) are not available here: the tests
+      # that need them build synthetic tables or skip.
+      - name: Build the F10.7 table from ESA SOLMAG
+        shell: bash
+        run: |
+          curl -sSf --retry 3 -o fap_mon.dat https://static.sdo.esoc.esa.int/SOLMAG/fap_mon.dat
+          python scripts/build_f107_table.py --fap fap_mon.dat
+      - name: pytest
+        run: python -m pytest -q
