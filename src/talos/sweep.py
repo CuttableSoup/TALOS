@@ -152,7 +152,7 @@ def run_sweep(
 ):
     """Run ``configs`` across processes; returns a pandas DataFrame of summaries.
 
-    On Windows (spawn start method) call this from inside an
+    Workers are spawned on every platform, so call this from inside an
     ``if __name__ == "__main__":`` block, or worker processes crash on start.
     """
     import pandas as pd
@@ -175,7 +175,12 @@ def run_sweep(
             if progress:
                 print(f"[{len(rows)}/{len(configs)}] {c.name} {r['wall_s']:.0f}s", flush=True)
     else:
-        with ProcessPoolExecutor(n_jobs, initializer=_init_worker, initargs=(threads_per_job,)) as ex:
+        # spawn, not fork: the parent has already run the numba kernels (_warm_jit), and a
+        # forked child of a process that used the OpenMP threading layer is killed on Linux
+        import multiprocessing
+
+        with ProcessPoolExecutor(n_jobs, mp_context=multiprocessing.get_context("spawn"),
+                                 initializer=_init_worker, initargs=(threads_per_job,)) as ex:
             futs = {ex.submit(run_one, c, out_dir): c for c in configs}
             for f in as_completed(futs):
                 r, ev = f.result()

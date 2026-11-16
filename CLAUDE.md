@@ -38,7 +38,7 @@ up to 2026-11-12) and under `runs/` (gitignored).
 - In code: `talos.config.load_scenario(path, overrides)` → `run_scenario(sc)`;
   sweeps: `RunConfig(name, config=None, overrides={...})`, `run_sweep(cfgs, "runs/x")`.
 - Speed: a 1-yr run is ~1 h; ~10 s per sim day. Runs do not scale past ~8 threads, so
-  sweeps use `n_jobs = 4, threads_per_job = 8`. On Windows, call `run_sweep` under
+  sweeps use `n_jobs = 4, threads_per_job = 8`. Workers are spawned: call `run_sweep` under
   `if __name__ == "__main__":`.
 - Checkpoints: runs with an out_dir write `checkpoints/<name>.pkl` every
   `run.checkpoint_days`. `--resume` continues or extends a run and reproduces the
@@ -227,7 +227,6 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
 - Debris lifetimes with SRP; absolute pointing budget; PROOF albedo on by default.
 - Validation: orekit / STELA propagation check, MASTER population cross-check, ODPO vs
   ESA F10.7.
-- Repo: no LICENSE or user-facing README yet. The CI workflow has not run on GitHub yet
-  (first push will show whether Linux reproduces the golden run to 1e-9). Gate-4 and DAS
+- Repo: no LICENSE or user-facing README yet. Gate-4 and DAS
   comparison tables are not committed as CSV fixtures.
 - Admin: Space-Track.org registration; consider contacting WVU (Hang Woon Lee lab).
