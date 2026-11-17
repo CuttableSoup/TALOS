@@ -1,7 +1,7 @@
 """Latin-hypercube uncertainty sweep over the CLAUDE.md input ranges (roadmap 7).
 
     python scripts/run_uncertainty.py N DAYS [--out runs/uncertainty] [--jobs 4] [--toy]
-        [--response [--melt-policy cap --melt-margin 3 --melt-cap-basis commanded]] [--config path.toml]
+        [--response [--melt-policy cap --melt-margin M --melt-cap-basis commanded]] [--config path.toml]
 
 Prints 5/50/95 % bands of the headline metrics and the Spearman rank correlation of
 each input with each metric. ``--toy`` uses the toy population (no ORDEM table needed).
@@ -21,12 +21,14 @@ METRICS = ["useful_engagements_per_hr_per_sat", "mean_dv_retro_per_engagement", 
 
 
 def main(n: int, days: float, out: str, jobs: int, toy: bool, seed: int, response: bool = False,
-         melt_policy: str = "cap", melt_margin: float = 3.0, config: str | None = None,
+         melt_policy: str = "cap", melt_margin: float | None = None, config: str | None = None,
          melt_cap_basis: str = "commanded") -> None:
     ovr = {"run.duration_days": days}
     ranges = None
     if response:
         ranges = RESPONSE_INPUTS
+        if melt_margin is None:  # 3 = jitter allowance of the commanded cap; else the physical limit
+            melt_margin = 3.0 if melt_policy == "cap" and melt_cap_basis == "commanded" else 1.0
         ovr |= {"ablation.melt_policy": melt_policy, "ablation.melt_margin": melt_margin,
                 "ablation.melt_cap_basis": melt_cap_basis}
     if toy:
@@ -52,9 +54,10 @@ if __name__ == "__main__":  # required: Windows spawns workers by re-importing t
     ap.add_argument("--response", action="store_true", help="sample RESPONSE_INPUTS (adds fragmentation, "
                     "thermal coupling, wider Cm, cm_scale_md)")
     ap.add_argument("--melt-policy", choices=("fragment", "cap"), default="cap")
-    ap.add_argument("--melt-margin", type=float, default=3.0)
+    ap.add_argument("--melt-margin", type=float, default=None,
+                    help="default 3 for the commanded cap, 1 for the expected cap and the fragment policy")
     ap.add_argument("--melt-cap-basis", choices=("commanded", "expected"), default="commanded",
-                    help="expected: cap on the mean delivered fluence under jitter (use --melt-margin 1)")
+                    help="expected: cap on the mean delivered fluence under jitter (margin defaults to 1)")
     ap.add_argument("--config", default=None)
     a = ap.parse_args()
     main(a.n, a.days, a.out, a.jobs, a.toy, a.seed, a.response, a.melt_policy, a.melt_margin, a.config,

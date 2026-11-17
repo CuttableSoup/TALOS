@@ -38,8 +38,11 @@ up to 2026-11-12) and under `runs/` (gitignored).
 - In code: `talos.config.load_scenario(path, overrides)` → `run_scenario(sc)`;
   sweeps: `RunConfig(name, config=None, overrides={...})`, `run_sweep(cfgs, "runs/x")`.
 - Speed: a 1-yr run is ~1 h; ~10 s per sim day. Runs do not scale past ~8 threads, so
-  sweeps use `n_jobs = 4, threads_per_job = 8`. Workers are spawned: call `run_sweep` under
-  `if __name__ == "__main__":`.
+  sweeps use `n_jobs = 4, threads_per_job = 8` (~15 s per sim day per run then; a 30-day,
+  32-sample sweep is ~1 h). Workers are spawned: call `run_sweep` under
+  `if __name__ == "__main__":`. Each run's row lands in `summaries/<name>.parquet` when it
+  finishes; rerunning a killed sweep into the same folder skips runs saved from the same
+  clean commit and resolved scenario (`reuse=False` to force).
 - Checkpoints: runs with an out_dir write `checkpoints/<name>.pkl` every
   `run.checkpoint_days`. `--resume` continues or extends a run and reproduces the
   uninterrupted run exactly. `--fresh-platforms` keeps only the population and starts new
@@ -197,6 +200,13 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
   Fragments add 0.6 / 16 / 44 % of the removed debris-years back. 7-day runs, design
   config, one seed, commit 5971309 (`runs/compare_melt_exp_7d`); differences under ~1 %
   are noise.
+- **At 30 days the ranking holds.** At 15 / 25 % coupling the expected cap gives up 1.0 /
+  3.5 % of debris-years and 8 / 26 % of removed objects against no gate; its cost per net
+  debris-year is +2 / +7 %, the fragment policy's +11 / +61 % (fragments put back 9.5 /
+  38 % of the removed debris-years). Firing through turns active-satellite collisions
+  avoided negative (−1.8 / −20 per yr, against +9.6 with no gate) and at 25 % grows the
+  population by 30k/yr; the cap keeps +7.5 / +8.4 per yr and shrinks it. Design config,
+  one seed, commit 1c5c7ef (`runs/compare_melt_exp_30d`).
 - **Across the response ranges, firing through the melt limit is a net debris source half
   the time.** 32-sample LHS over `RESPONSE_INPUTS`, 30 days, design config: the population
   grows in 16 of 32 samples with `melt_policy = "fragment"` and in 2 of 32 with the cap at
