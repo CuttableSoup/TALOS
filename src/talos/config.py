@@ -334,7 +334,9 @@ FRESH_MAY_DIFFER = ("run.score", "run.stochastic", "run.predict_pulse_stride",
 _LEGACY = {"dynamics.srp": False, "dynamics.srp_cr": 1.2,
            # melt gate added 2026-11-12, off by default
            "ablation.thermal_coupling": 0.0, "ablation.melt_enthalpy_j_kg": 976e3,
-           "ablation.melt_margin": 1.0, "ablation.melt_policy": "fragment"}
+           "ablation.melt_margin": 1.0, "ablation.melt_policy": "fragment",
+           # jitter-aware melt cap added 2026-11-17
+           "ablation.melt_cap_basis": "commanded"}
 
 
 # sections newer than some checkpoints on disk; default values of these match "absent"

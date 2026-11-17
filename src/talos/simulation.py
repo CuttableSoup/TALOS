@@ -100,6 +100,9 @@ class SimResult:
     focus_need1: np.ndarray | None = field(default=None, repr=False)
     # talos.provenance.collect(scenario): commit, config hash, data-table hashes, versions
     provenance: dict = field(default_factory=dict)
+    # natural lifetime [s] of every ablation fragment from its release; None when the run
+    # sheds no fragments (fragment_prob_per_burst = 0 and no melt_policy "fragment")
+    fragment_lifetime_s: np.ndarray | None = field(default=None, repr=False)
 
     def records(self) -> list[dict]:
         return [asdict(e) for e in self.events]
@@ -113,6 +116,10 @@ class SimResult:
         ``removed_credited`` only counts objects whose natural lifetime exceeded
         ``credit_min_lifetime_s`` (objects about to re-enter anyway earn no credit).
         ``debris_years_removed`` sums lifetime reduction, capped at ``horizon_s``.
+        Runs that shed ablation fragments add ``debris_years_fragments`` (the fragments'
+        natural lifetimes from release, same cap) and ``debris_years_net`` = removed minus
+        fragments. A fragment later lasered is credited in ``debris_years_removed`` like any
+        object, so its net charge is its lifetime after the laser.
         """
         li, lf = self.lifetime_initial_s, self.lifetime_final_s
         rem = self.removed.copy()
@@ -131,6 +138,11 @@ class SimResult:
                      f"risk_{name}_delta_obj_yr_per_yr": (aft - nat) * YEAR / span}
             if self.shell_res_fragments_s is not None:
                 risk[f"risk_{name}_obj_yr_fragments"] = float(self.shell_res_fragments_s[k]) / YEAR
+        frag = {}
+        if self.fragment_lifetime_s is not None:
+            fy = float(np.minimum(self.fragment_lifetime_s, horizon_s).sum()) / YEAR
+            frag = {"debris_years_fragments": fy, "debris_years_fragments_per_yr": fy * YEAR / span,
+                    "debris_years_net": dyears - fy, "debris_years_net_per_yr": (dyears - fy) * YEAR / span}
         duty = float(np.mean(list(self.fire_time_s.values()))) / span
         return {
             "sim_hours": hours,
@@ -147,6 +159,7 @@ class SimResult:
             "removed_credited_per_yr": len(credited) * YEAR / span,
             "debris_years_removed": dyears,
             "debris_years_removed_per_yr": dyears * YEAR / span,
+            **frag,
             **self.env_stats,
             **self.pop_stats,
             **risk,
@@ -474,6 +487,7 @@ def run_engagements(
                     *burst_states(plat, pop, j, tp), plat.laser, float(pop.laser_areal_density(j)), params,
                     jitter_rad=plat.atp.jitter_rad if rng is not None else 0.0, rng=rng,
                     pointing_bias=knowledge.pointing_bias() if knowledge is not None and rng is not None else None,
+                    cap_jitter_rad=plat.atp.jitter_rad,  # same cap as the scheduler's prediction
                 )
                 # the melt cap ends the burst (and its energy / heat / storage cycle) early
                 t_stop = best.t_start + res.n_pulses / plat.laser.prf_hz if res.capped else best.t_stop
@@ -523,13 +537,19 @@ def run_engagements(
     if pending:  # fragments from the last chunk
         flush_pending()
     res_frag = None
-    if shells is not None and params.sheds_fragments:
-        res_frag = np.zeros(len(names))
+    life_frag = None  # natural lifetime [s] of each ablation fragment from its release (fragment charge)
+    if params.sheds_fragments:
+        life_frag = np.zeros(0)
+        if shells is not None:
+            res_frag = np.zeros(len(names))
         if frag_idx:
             fi = np.array(frag_idx)
             ef = pop0.elements[fi]
-            _, rf = orbital_lifetime(ef.a, ef.e, pop0.ballistic_coeff[fi], t0_s=pop0.epoch_s[fi], shells_m=shells)
-            res_frag = rf.sum(axis=0)
+            out = orbital_lifetime(ef.a, ef.e, pop0.ballistic_coeff[fi], t0_s=pop0.epoch_s[fi], shells_m=shells)
+            if shells is not None:
+                out, rf = out
+                res_frag = rf.sum(axis=0)
+            life_frag = np.atleast_1d(out).astype(float)
     max_duty = float(np.mean([s.steady_state_max_duty() for s in state.values()]))
     hit = np.array(sorted({e.debris_index for e in events}), dtype=int)
     li, lf = {}, {}
@@ -592,7 +612,8 @@ def run_engagements(
                      dict(planner.stats, committed_now=len(planner.committed)) if planner is not None else {},
                      env_stats, pop_stats, names, res_i, res_f, res_frag,
                      c_start if fresh else 0.0, removed_at_start,
-                     focus_idx, focus_need0, focus_need(pop, focus_idx) if use_focus else None)
+                     focus_idx, focus_need0, focus_need(pop, focus_idx) if use_focus else None,
+                     fragment_lifetime_s=life_frag)
 
 
 def _storage_life_yr(cycle_damage_per_yr: float, calendar_life_yr: float) -> float:

@@ -17,7 +17,9 @@ Per platform:
   + operations x life.
 
 Headline: cost per debris-year = constellation cost / (debris-years removed per
-year x life), debris-years being the summed reduction in orbital lifetime. Cost per
+year x life), debris-years being the summed reduction in orbital lifetime.
+``cost_per_net_debris_year_usd`` charges the natural lifetime of ablation fragments
+against it (equal to the headline when the run sheds none). Cost per
 (credited) removal is kept, but it misleads across mission phases: late in a
 mission most removals finish objects already lowered (little lifetime left, not
 credited) while heavy objects carry long lifetimes, so per removal the late phase
@@ -158,6 +160,10 @@ def evaluate(sc, summary: dict) -> dict:
     removals = summary.get("removed_credited_per_yr", 0.0) * service_mean
     dyears = summary.get("debris_years_removed_per_yr", 0.0) * service_mean
     removed = summary.get("removed", 0)
+    # fragment charge: debris-years shed as ablation fragments are subtracted (runs that
+    # shed none: net = gross). Inf when the run adds more debris-years than it removes.
+    net = (summary.get("debris_years_net_per_yr", summary.get("debris_years_removed_per_yr", 0.0))
+           * service_mean)
     return {
         **{f"mass_{k}_kg": v for k, v in m.items()},
         "drag_area_m2": area,
@@ -173,6 +179,8 @@ def evaluate(sc, summary: dict) -> dict:
         "removals_mission": removals,
         "debris_years_mission": dyears,
         "cost_per_debris_year_usd": total / dyears if dyears > 0 else np.inf,
+        "debris_years_net_mission": net,
+        "cost_per_net_debris_year_usd": total / net if net > 0 else np.inf,
         "cost_per_removal_kusd": total / removals / 1e3 if removals > 0 else np.inf,
         # share of removals credited (> 1 yr natural lifetime left): low late in a mission
         "credited_fraction": summary.get("removed_credited", 0) / removed if removed > 0 else np.nan,

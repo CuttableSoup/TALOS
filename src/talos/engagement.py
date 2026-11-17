@@ -86,10 +86,19 @@ class AblationParams:
     melt_enthalpy_j_kg: float = 976e3
     melt_margin: float = 1.0
     melt_policy: str = "fragment"
+    # What the cap counts. "commanded" (pre-2026-11-17 runs): the on-axis fluence of every
+    # emitted pulse, the worst case of every pulse landing centred. "expected": the commanded
+    # sum times the mean fraction a Gaussian spot delivers under the platform's 2-axis
+    # Gaussian jitter, 1 / (1 + 4 (sigma/w)^2) (``delivered_fraction``; ~0.20 at the design
+    # 0.3 urad). The cap then needs no hand-set margin for jitter; unknown pointing bias is
+    # not in it (the platform cannot know it).
+    melt_cap_basis: str = "commanded"
 
     def __post_init__(self) -> None:
         if self.melt_policy not in ("fragment", "cap"):
             raise ValueError(f"melt_policy {self.melt_policy!r}: expected fragment or cap")
+        if self.melt_cap_basis not in ("commanded", "expected"):
+            raise ValueError(f"melt_cap_basis {self.melt_cap_basis!r}: expected commanded or expected")
         if not 0.0 <= self.thermal_coupling <= 1.0:
             raise ValueError("thermal_coupling is a fraction of the incident fluence (0-1)")
 
@@ -100,6 +109,14 @@ class AblationParams:
         if self.thermal_coupling <= 0:
             return np.full(mu.shape, np.inf)
         return self.melt_margin * self.melt_enthalpy_j_kg * mu / self.thermal_coupling
+
+    def melt_cap_sum(self, areal_density, laser: LaserConfig, jitter_rad: float) -> np.ndarray:
+        """Commanded (on-axis) fluence sum [J/m^2] at which the cap ends a burst: the melt
+        limit, divided by the expected delivered fraction with ``melt_cap_basis = "expected"``."""
+        limit = self.melt_fluence_sum(areal_density)
+        if self.melt_cap_basis == "expected":
+            limit = limit / delivered_fraction(laser, jitter_rad)
+        return limit
 
     @property
     def melt_cap(self) -> bool:
@@ -173,6 +190,15 @@ def spot_diameter(range_m, laser: LaserConfig) -> np.ndarray:
     return laser.beam_a * laser.m2 * laser.wavelength_m * np.asarray(range_m) / laser.aperture_d_m
 
 
+def delivered_fraction(laser: LaserConfig, jitter_rad: float) -> float:
+    """Mean fraction of the on-axis fluence that lands on a point target under 2-axis
+    Gaussian pointing jitter (``jitter_rad`` 1-sigma per axis) with a Gaussian spot of 1/e^2
+    radius w = spot_diameter / 2: E[exp(-2 r^2 / w^2)] for Rayleigh r = 1 / (1 + 4 (sigma/w)^2).
+    sigma / w does not depend on range (both scale with R)."""
+    s_w = 2.0 * jitter_rad * laser.aperture_d_m / (laser.beam_a * laser.m2 * laser.wavelength_m)
+    return 1.0 / (1.0 + 4.0 * s_w**2)
+
+
 def fluence(range_m, laser: LaserConfig) -> np.ndarray:
     """Peak-equivalent fluence on target [J/m^2]."""
     k = 2.0 * laser.aperture_d_m / (laser.m2 * laser.beam_a * laser.wavelength_m * np.asarray(range_m, float))
@@ -225,6 +251,7 @@ def integrate_burst(
     jitter_rad: float = 0.0,
     rng: np.random.Generator | None = None,
     pointing_bias: np.ndarray | None = None,
+    cap_jitter_rad: float | None = None,
 ) -> BurstResult:
     """Integrate one burst given states (P, 3) sampled at each pulse time.
 
@@ -237,7 +264,9 @@ def integrate_burst(
     at the last pulse that keeps the commanded (on-axis) fluence sum within the melt limit,
     the worst case of every pulse landing centred (the platform cannot see where they land);
     ``heat_frac`` is always from the fluence actually delivered, which pointing jitter
-    makes much smaller.
+    makes much smaller. With ``melt_cap_basis = "expected"`` the cap allows for the mean
+    jitter loss at ``cap_jitter_rad`` (the platform's design jitter; default ``jitter_rad``),
+    so the prediction and the fired burst can share one cap whether or not jitter is sampled.
     """
     d = r_deb - r_sat
     R = np.linalg.norm(d, axis=-1)
@@ -245,8 +274,10 @@ def integrate_burst(
     limit = float(params.melt_fluence_sum(areal_density))
     capped = False
     if params.melt_cap:
+        cap = float(params.melt_cap_sum(areal_density, laser,
+                                        jitter_rad if cap_jitter_rad is None else cap_jitter_rad))
         n_ok = int(np.searchsorted(np.cumsum(np.where(phi >= params.threshold_fluence, phi, 0.0)),
-                                   limit * (1 + 1e-12), side="right"))
+                                   cap * (1 + 1e-12), side="right"))
         if n_ok < len(R):
             capped = True
             d, R, phi, v_deb = d[:n_ok], R[:n_ok], phi[:n_ok], v_deb[:n_ok]
@@ -324,20 +355,22 @@ def predict_bursts(
     areal_density: np.ndarray,
     params: AblationParams = AblationParams(),
     pulse_weight: float = 1.0,
+    cap_jitter_rad: float = 0.0,
 ) -> BurstPrediction:
     """Batched deterministic version of ``integrate_burst``.
 
     r_sat: (P, 3); r_deb, v_deb: (P, n, 3); active: (P, n) pulses inside each
     candidate's burst; areal_density: (n,). Matches ``integrate_burst(rng=None)``.
     ``pulse_weight``: real pulses each row stands for (prediction stride), used by the melt
-    cap only; sums and counts are returned per row.
+    cap only; sums and counts are returned per row. ``cap_jitter_rad``: the platform's
+    jitter, for the cap with ``melt_cap_basis = "expected"``.
     """
     d = r_deb - r_sat[:, None, :]
     R = np.linalg.norm(d, axis=-1)
     phi = fluence(R, laser)
     fire = active & (phi >= params.threshold_fluence)
     if params.melt_cap:
-        limit = params.melt_fluence_sum(areal_density) / pulse_weight
+        limit = params.melt_cap_sum(areal_density, laser, cap_jitter_rad) / pulse_weight
         fire &= np.cumsum(np.where(fire, phi, 0.0), axis=0) <= limit[None, :] * (1 + 1e-12)
     cm = coupling_coefficient(phi, params)
     mag = np.where(fire, params.eta1_nominal * cm * phi / np.asarray(areal_density)[None, :], 0.0)

@@ -29,10 +29,16 @@ VARIANTS = {
     "cap_07_x3": {"ablation.thermal_coupling": 0.07, "ablation.melt_policy": "cap", "ablation.melt_margin": 3.0},
     "cap_15_x3": {"ablation.thermal_coupling": 0.15, "ablation.melt_policy": "cap", "ablation.melt_margin": 3.0},
     "cap_25_x3": {"ablation.thermal_coupling": 0.25, "ablation.melt_policy": "cap", "ablation.melt_margin": 3.0},
+    # jitter-aware cap: the commanded sum is scaled by the expected delivered fraction
+    # (~0.20 at 0.3 urad), margin 1
+    "cap_07_exp": {"ablation.thermal_coupling": 0.07, "ablation.melt_policy": "cap", "ablation.melt_cap_basis": "expected"},
+    "cap_15_exp": {"ablation.thermal_coupling": 0.15, "ablation.melt_policy": "cap", "ablation.melt_cap_basis": "expected"},
+    "cap_25_exp": {"ablation.thermal_coupling": 0.25, "ablation.melt_policy": "cap", "ablation.melt_cap_basis": "expected"},
 }
 COLS = ["name", "useful_engagements_per_hr_per_sat", "mean_dv_retro_per_engagement", "removed",
         "debris_years_removed_per_yr", "melt_bursts", "capped_bursts", "ablation_fragments",
-        "net_change_per_yr", "active_collisions_avoided_per_yr", "cost_per_debris_year_usd", "wall_s"]
+        "debris_years_fragments_per_yr", "net_change_per_yr", "active_collisions_avoided_per_yr",
+        "cost_per_debris_year_usd", "cost_per_net_debris_year_usd", "wall_s"]
 
 
 def main(days: float, only: list[str] | None, out: str) -> None:
