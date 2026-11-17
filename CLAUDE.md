@@ -153,7 +153,7 @@ up to 2026-11-12) and under `runs/` (gitignored).
 | Station keeping | `[cost] drag_*`, `sk_*` | drag make-up costed, Hall Isp 1500 s | picks; negligible (< 1 m/s) |
 | Platform impacts | `[survival]` | lethal ≥ 1 cm on 10 m² bus; radiator puncture ≥ 1 mm on 10 % of area, zenith / nadir faces | 1 cm **sourced** (weak); rest picks |
 | Uncertainty ranges | `talos.sweep.UNCERTAIN_INPUTS` | η₂, Cm, η₁, thrust angle, wall-plug, sun exclusion, settle | sourced ranges where the table has one, else picks |
-| Response ranges | `talos.sweep.RESPONSE_INPUTS` (`run_uncertainty.py --response`) | the above, with Cm 16.7–100 N/MW, `cm_scale_md` 0.5–1, fragmentation 0–1 %/burst, thermal coupling 0.07–0.25 | brackets from the rows above; run once per melt policy (32 samples, 30 days, `design.toml`, commit 73ae64b; `runs/response_30d_*`) |
+| Response ranges | `talos.sweep.RESPONSE_INPUTS` (`run_uncertainty.py --response`) | the above, with Cm 16.7–100 N/MW, `cm_scale_md` 0.5–1, fragmentation 0–1 %/burst, thermal coupling 0.07–0.25 | brackets from the rows above; run per melt policy (32 samples, 30 days, `design.toml`; `runs/response_30d_*`: fragment and margin-3 cap at 73ae64b, expected cap at 1c5c7ef) |
 
 ## Validation gates
 | Gate | Status |
@@ -218,6 +218,20 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
   fragmentation per burst +0.26 on cost, +0.3 to +0.4 on net change; η₂, η₁, thrust angle,
   settle and `cm_scale_md` are below ~0.35, which is noise at 32 samples. Growth cases sit
   at low Cm (mostly < 35 N/MW) with coupling above ~0.13.
+- **With fragments charged, the jitter-aware cap is the cheaper policy across the response
+  ranges.** Same 32 samples, `melt_cap_basis = "expected"`, margin 1 (commit 1c5c7ef,
+  `runs/response_30d_cap_exp`) against firing through (rerun at 1669af7, identical to the
+  73ae64b sweep; `runs/response_30d_frag2`). The cap: population grows in 2 of 32
+  (fragment 16); debris-years −0.7 % (median; −4.6 to +0.4 % at the 5th–95th percentiles);
+  25 % fewer removed objects; 9× fewer fragments, all from `fragment_prob_per_burst`. Cost
+  per net debris-year is lower in 31 of 32 samples (median −13 %); above 15 % coupling it
+  is lower in all 18 samples (median −38 %). Firing through removes fewer debris-years than
+  its fragments add in 3 of 32. Fragments put back a median 21 % of removed debris-years
+  when firing through (95th percentile 110 %), 6 % with the cap. Active-satellite
+  collisions avoided: median +1.8 / yr with the cap, −6.2 firing through (negative in 23 of
+  32). On gross cost per debris-year firing through still looks 2 % cheaper. Rank
+  correlations on the cap are as before: Cm −0.74 on net cost and −0.65 on net change,
+  coupling +0.41 / +0.43, fragmentation per burst +0.32 / +0.34.
 - **The μ model moves removal counts (×1.2–2.6), not cost per debris-year (±1 %).**
 - **Large debris needs concentrated fire and pulse energy.** Greedy removes 0–1 objects
   ≥ 9 cm in 30 days on the depleted sky; an exclusive focus campaign removes 9–29.
@@ -243,10 +257,10 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
 - Results are one seed per variant unless stated.
 
 ## Next steps
-- Melt gate: 30-day runs and seeds of the `expected` cap vs the fragment policy, scored on
-  `cost_per_net_debris_year_usd`; rerun the response bands with the `expected` cap (it
-  should replace `melt_margin = 3` in `run_uncertainty.py`); a quantile allowance for the
-  scatter of the delivered sum; a fragment charge for collision risk, not just lifetime.
+- Melt gate: decide whether the `expected` cap becomes the design default (it wins on net
+  cost in 31 of 32 response samples); seeds on the 30-day comparison; a quantile allowance
+  for the scatter of the delivered sum; a fragment charge for collision risk, not just
+  lifetime.
 - Response bands (`run_uncertainty.py N 30 --response`, ~1 h per policy at N = 32): repeat
   with a second LHS seed and more samples before quoting the smaller correlations; add the
   μ model and `melt_margin` as axes; rerun on the day-720 sky.
