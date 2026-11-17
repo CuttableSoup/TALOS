@@ -38,11 +38,11 @@ COLS = ["name", "delivered_frac_jitter", "useful_engagements_per_hr_per_sat", "m
         "removed", "debris_years_removed_per_yr", "capped_bursts", "cost_per_net_debris_year_usd", "wall_s"]
 
 
-def main(days: float, only: list[str] | None, out: str) -> None:
+def main(days: float, only: list[str] | None, out: str, jobs: int = 4) -> None:
     names = only or list(VARIANTS)
     cfgs = [RunConfig(n, config=DESIGN, overrides={**VARIANTS[n], "run.duration_days": days}) for n in names]
-    n = min(len(cfgs), 4)
-    df = run_sweep(cfgs, out_dir=out, n_jobs=n, threads_per_job=32 // n)
+    n = min(len(cfgs), jobs)
+    df = run_sweep(cfgs, out_dir=out, n_jobs=n, threads_per_job=8)
     df["delivered_frac_jitter"] = [
         delivered_fraction(sc.laser, sc.atp.jitter_rad)
         for sc in (load_scenario(DESIGN, VARIANTS[k]) for k in df["name"])]
@@ -57,5 +57,6 @@ if __name__ == "__main__":  # required: Windows spawns workers by re-importing t
     ap.add_argument("days", type=float, nargs="?", default=7.0)
     ap.add_argument("--out", default="runs/compare_pointing")
     ap.add_argument("--only", nargs="+", default=None)
+    ap.add_argument("--jobs", type=int, default=4)
     a = ap.parse_args()
-    main(a.days, a.only, a.out)
+    main(a.days, a.only, a.out, a.jobs)
