@@ -66,22 +66,37 @@ LARGE_TEST = {"campaign.enabled": True, "campaign.count": 0, "campaign.min_diame
               "campaign.exclusive": True, "campaign.min_impulse_frac": 0.15}
 
 
+def late_pins(late_ckpt: str) -> dict:
+    """Atmosphere settings of the late-sky checkpoint where they differ from the design's:
+    a fresh-platform restart must keep them (the day-720 design checkpoint predates the
+    F10.7 table default, so it runs on the parametric solar cycle)."""
+    from talos.config import load_scenario, scenario_dict
+    from talos.simulation import load_checkpoint
+
+    old = load_checkpoint(late_ckpt)["meta"].get("scenario", {})
+    new = scenario_dict(load_scenario(DESIGN))
+    return {k: v for k, v in old.items() if k.startswith("atmosphere.") and v != new.get(k)}
+
+
 def configs(ds: list[dict], days: float, late_ckpt: str, late_day: float,
             large_days: float = 0.0, run_seed: int | None = None, early_only: bool = False) -> list[RunConfig]:
     """``run_seed``: early-sky seed (population sample and engagement draws); the late sky
     resumes the checkpoint, whose seed is fixed. ``early_only``: skip the late and large runs."""
     out = []
+    pins = {} if early_only else late_pins(late_ckpt)
+    if pins:
+        print(f"late sky keeps the checkpoint's {pins}", flush=True)
     for j, ovr in enumerate(ds):
         common = {**ovr, "run.checkpoint_days": 0.0}
         seed = {} if run_seed is None else {"run.seed": run_seed}
         out.append(RunConfig(f"d{j:03d}_early", DESIGN, {**common, **seed, "run.duration_days": days}))
         if early_only:
             continue
-        out.append(RunConfig(f"d{j:03d}_late", DESIGN, {**common, "run.duration_days": late_day + days},
+        out.append(RunConfig(f"d{j:03d}_late", DESIGN, {**common, **pins, "run.duration_days": late_day + days},
                              resume=late_ckpt, fresh_platforms=True))
         if large_days > 0:
             out.append(RunConfig(f"d{j:03d}_large", DESIGN,
-                                 {**common, **LARGE_TEST, "run.duration_days": late_day + large_days},
+                                 {**common, **pins, **LARGE_TEST, "run.duration_days": late_day + large_days},
                                  resume=late_ckpt, fresh_platforms=True))
     return out
 

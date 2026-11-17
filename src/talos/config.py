@@ -339,6 +339,10 @@ _LEGACY = {"dynamics.srp": False, "dynamics.srp_cr": 1.2,
            "ablation.melt_margin": 1.0, "ablation.melt_policy": "fragment",
            # jitter-aware melt cap added 2026-11-17
            "ablation.melt_cap_basis": "commanded",
+           # PROOF albedo model added 2026-11-08 (fe889c7) without a legacy entry
+           "population.albedo_model": "fixed",
+           # F10.7 table added with activity = "table" (only read then)
+           "atmosphere.f107_table": "",
            # pointing error budget added 2026-11-17, off by default
            "knowledge.boresight_bias_rad": 0.0, "knowledge.centroid_rad": 0.0,
            "knowledge.centroid_ref_mag": 14.0, "knowledge.drift_rad_s": 0.0,
