@@ -15,6 +15,10 @@ import argparse
 from talos.sweep import RunConfig, run_sweep
 
 DESIGN = "config/design.toml"
+# design.toml has the expected cap on (2026-11-17); every variant starts from the gate off so
+# the names keep their meaning
+GATE_OFF = {"ablation.thermal_coupling": 0.0, "ablation.melt_policy": "fragment",
+            "ablation.melt_cap_basis": "commanded", "ablation.melt_margin": 1.0}
 VARIANTS = {
     "off": {},
     "frag_07": {"ablation.thermal_coupling": 0.07},
@@ -43,7 +47,8 @@ COLS = ["name", "useful_engagements_per_hr_per_sat", "mean_dv_retro_per_engageme
 
 def main(days: float, only: list[str] | None, out: str) -> None:
     names = only or list(VARIANTS)
-    cfgs = [RunConfig(n, config=DESIGN, overrides={**VARIANTS[n], "run.duration_days": days}) for n in names]
+    cfgs = [RunConfig(n, config=DESIGN, overrides={**GATE_OFF, **VARIANTS[n], "run.duration_days": days})
+            for n in names]
     n = min(len(cfgs), 4)
     df = run_sweep(cfgs, out_dir=out, n_jobs=n, threads_per_job=32 // n)
     print(df[[c for c in COLS if c in df]].to_string(index=False, float_format=lambda x: f"{x:,.3f}"))

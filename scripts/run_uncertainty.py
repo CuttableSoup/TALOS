@@ -21,16 +21,22 @@ METRICS = ["useful_engagements_per_hr_per_sat", "mean_dv_retro_per_engagement", 
 
 
 def main(n: int, days: float, out: str, jobs: int, toy: bool, seed: int, response: bool = False,
-         melt_policy: str = "cap", melt_margin: float | None = None, config: str | None = None,
-         melt_cap_basis: str = "commanded") -> None:
+         melt_policy: str | None = None, melt_margin: float | None = None, config: str | None = None,
+         melt_cap_basis: str | None = None) -> None:
     ovr = {"run.duration_days": days}
     ranges = None
     if response:
         ranges = RESPONSE_INPUTS
-        if melt_margin is None:  # 3 = jitter allowance of the commanded cap; else the physical limit
-            melt_margin = 3.0 if melt_policy == "cap" and melt_cap_basis == "commanded" else 1.0
-        ovr |= {"ablation.melt_policy": melt_policy, "ablation.melt_margin": melt_margin,
-                "ablation.melt_cap_basis": melt_cap_basis}
+        # melt options not given keep the config's (design.toml: expected cap, margin 1)
+        if melt_policy is not None:
+            ovr["ablation.melt_policy"] = melt_policy
+        if melt_cap_basis is not None:
+            ovr["ablation.melt_cap_basis"] = melt_cap_basis
+        if melt_margin is None and melt_policy is not None:
+            # 3 = jitter allowance of the commanded cap; else the physical limit
+            melt_margin = 3.0 if melt_policy == "cap" and (melt_cap_basis or "commanded") == "commanded" else 1.0
+        if melt_margin is not None:
+            ovr["ablation.melt_margin"] = melt_margin
     if toy:
         ovr |= {"population.kind": "toy", "population.areal_density_model": "sbm"}
     cfgs = lhs_matrix(n, ranges, base=RunConfig("lhs", config=config, overrides=ovr), seed=seed)
@@ -53,10 +59,10 @@ if __name__ == "__main__":  # required: Windows spawns workers by re-importing t
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--response", action="store_true", help="sample RESPONSE_INPUTS (adds fragmentation, "
                     "thermal coupling, wider Cm, cm_scale_md)")
-    ap.add_argument("--melt-policy", choices=("fragment", "cap"), default="cap")
+    ap.add_argument("--melt-policy", choices=("fragment", "cap"), default=None, help="default: the config's")
     ap.add_argument("--melt-margin", type=float, default=None,
-                    help="default 3 for the commanded cap, 1 for the expected cap and the fragment policy")
-    ap.add_argument("--melt-cap-basis", choices=("commanded", "expected"), default="commanded",
+                    help="with --melt-policy: default 3 for the commanded cap, else 1")
+    ap.add_argument("--melt-cap-basis", choices=("commanded", "expected"), default=None,
                     help="expected: cap on the mean delivered fluence under jitter (margin defaults to 1)")
     ap.add_argument("--config", default=None)
     a = ap.parse_args()

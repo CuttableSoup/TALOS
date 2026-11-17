@@ -75,7 +75,9 @@ up to 2026-11-12) and under `runs/` (gitignored).
 | `_kernels` | numba kernels (screening, prediction, resources, lifetime) |
 
 - `config/`: `baseline.toml` (reference), `design.toml` (60 m² radiator, 2 kWh supercap,
-  20 s bursts), `design_mc.toml` (d027 from the design search). A TOML may start with
+  20 s bursts; since 2026-11-17 the `expected` melt cap at 15 % coupling, so design results
+  from before then had the gate off: `--set ablation.thermal_coupling=0` reproduces them),
+  `design_mc.toml` (d027 from the design search; inherits the cap). A TOML may start with
   `base = "other.toml"` and list only the keys that differ.
 - `scripts/`: `run_baseline`, `compare_*` (one lever each), `mc_design` (design search over
   early and day-720 skies), `large_debris_test`, `run_uncertainty`, `render_run`,
@@ -124,7 +126,7 @@ up to 2026-11-12) and under `runs/` (gitignored).
 | η₁ | `eta1_mean/kappa`, `eta1_basis` | Beta, mean 0.3, κ = 10; `along_beam` | mean and basis **sourced** (Phipps 2012, η_c = 0.3 after Liedahl); spread a guess |
 | Δv off-axis angle | `off_axis_*` | N(45°, 15°) clipped [0, 90°] | centre **sourced** (Scharring 2018: 45°, 40 % scatter); spread a guess |
 | Fragmentation | `fragment_prob_per_burst` | 0 (off) | **guess**: no published probability |
-| Target heating (melt gate) | `thermal_coupling`, `melt_enthalpy_j_kg`, `melt_margin`, `melt_policy`, `melt_cap_basis` | 0 (off); 976 kJ/kg; 1; `fragment`; `commanded` (`expected` scales the cap by the mean delivered fraction under jitter, 1/(1+4(σ/w)²) ≈ 0.20 at 0.3 µrad) | coupling **unsourced at 355 nm / 100 ps**: bracket 0.07–0.25 (Scharring 2018 simulation at 1064 nm: ≤ 7 % ultrashort, ≥ 20 % near onset for 100 ps and longer; measured 15–25 % typical); 0.02–0.125 at 10 ns IR (Keil 2023); enthalpy derived |
+| Target heating (melt gate) | `thermal_coupling`, `melt_enthalpy_j_kg`, `melt_margin`, `melt_policy`, `melt_cap_basis` | 0 (off); 976 kJ/kg; 1; `fragment`; `commanded` (`design.toml`: 0.15, `cap`, `expected`); `expected` scales the cap by the mean delivered fraction under jitter, 1/(1+4(σ/w)²) ≈ 0.20 at 0.3 µrad | coupling **unsourced at 355 nm / 100 ps**: bracket 0.07–0.25 (Scharring 2018 simulation at 1064 nm: ≤ 7 % ultrashort, ≥ 20 % near onset for 100 ps and longer; measured 15–25 % typical); 0.02–0.125 at 10 ns IR (Keil 2023); enthalpy derived |
 | Debris count in band | `population.kind = "ordem"` | 75.9k, 1–10 cm, 600–1000 km | **sourced** (ORDEM 3.2); inclination mix is a fit to ORDEM flux spectra |
 | Areal density μ | `areal_density_model` | `sbm` (median 4.5 kg/m²) | **sourced** (NASA SBM); `hanada` variants give lighter fragments (median 2.2–3.0) |
 | Debris albedo | `albedo_median/log_sigma`, `albedo_model` | 0.1, lognormal σ 0.5 (`fixed`) | pick; `proof` (fragments 0.2, NaK 0.85) **sourced**, off |
@@ -257,17 +259,18 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
 - Results are one seed per variant unless stated.
 
 ## Next steps
-- Melt gate: decide whether the `expected` cap becomes the design default (it wins on net
-  cost in 31 of 32 response samples); seeds on the 30-day comparison; a quantile allowance
-  for the scatter of the delivered sum; a fragment charge for collision risk, not just
-  lifetime.
+- Re-baseline the design results with the melt cap on (`design.toml` now has it): seeds on
+  the leading designs, the d027 whole-mission run and the day-720 sky are all still quoted
+  with the gate off.
+- Melt gate: seeds on the 30-day comparison; a quantile allowance for the scatter of the
+  delivered sum; a fragment charge for collision risk, not just lifetime.
 - Response bands (`run_uncertainty.py N 30 --response`, ~1 h per policy at N = 32): repeat
   with a second LHS seed and more samples before quoting the smaller correlations; add the
   μ model and `melt_margin` as axes; rerun on the day-720 sky.
 - Supercap bank: confirm the BOSC test voltage and depth from the paper itself, then set
   the specific energy for the 4.5 M rating.
 - Seeds on the leading designs (control, d027, d002, d007, d012).
-- Whole-mission run of d027 (`config/design_mc.toml`, 2 years, checkpointed; overnight),
+- Whole-mission run of d027 (`config/design_mc.toml`, 2 years, checkpointed; ~3 h),
   scored per debris-year; decide whether to size the mission to the light inventory (~2 yr).
 - Measurements to ask for: aluminium Cm and thermal coupling at 355 nm / 100 ps.
 - Storage sized for life with average power; Δv per burst on μ ≥ 2 targets.

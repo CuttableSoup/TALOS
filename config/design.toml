@@ -23,3 +23,11 @@ storage_cycle_exponent = 0.0   # [sourced, weak] EDLC life governed by voltage +
 storage_calendar_life_yr = 10.0  # [sourced] Maxwell 160V 10F projected life at VR, 25 C
 storage_specific_energy_wh_kg = 4.0  # [sourced] module 3.8-5.4 Wh/kg; space packaging not included
 battery_rt_eff = 0.95          # [pick] supercap round trip (ESR losses -> heat)
+
+[ablation]
+# Melt gate on (added 2026-11-17): bursts end where the mean delivered heat reaches the melt
+# limit. Wins on cost per net debris-year in 31 of 32 response samples (CLAUDE.md). Earlier
+# design runs had the gate off: set ablation.thermal_coupling=0 to reproduce them.
+thermal_coupling = 0.15        # [guess] middle of the 0.07-0.25 bracket (Scharring 2018; unsourced at 355 nm / 100 ps)
+melt_policy = "cap"            # [pick]
+melt_cap_basis = "expected"    # [derived] cap on mean delivered fluence under the design jitter, margin 1

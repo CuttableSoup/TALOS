@@ -1,4 +1,4 @@
-from dataclasses import fields
+from dataclasses import fields, replace
 
 import numpy as np
 import pytest
@@ -97,4 +97,8 @@ def test_design_scenario():
     assert sc.resources.radiator_area_m2 == 60.0 and sc.resources.burst_s == 20.0
     for k, v in STORAGE_PRESETS["supercap"].items():
         assert getattr(sc.resources, k) == pytest.approx(v), k
-    assert sc.laser == base.laser and sc.ablation == base.ablation
+    assert sc.laser == base.laser
+    # the design flies the jitter-aware melt cap; every other ablation input is the baseline's
+    a = sc.ablation
+    assert (a.thermal_coupling, a.melt_policy, a.melt_cap_basis, a.melt_margin) == (0.15, "cap", "expected", 1.0)
+    assert replace(a, thermal_coupling=0.0, melt_policy="fragment", melt_cap_basis="commanded") == base.ablation
