@@ -117,6 +117,39 @@ def run_one(cfg: RunConfig, out_dir: str | os.PathLike | None = None) -> tuple[d
     return row, events
 
 
+def _save_summary(out_dir, row: dict) -> None:
+    """One file per run, written when it finishes: parallel sweeps into one folder don't
+    clobber, and a killed sweep keeps its finished runs."""
+    if out_dir is None:
+        return
+    import pandas as pd
+
+    d = Path(out_dir) / "summaries"
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / f"{row['name']}.parquet.{os.getpid()}.tmp"
+    pd.DataFrame([row]).to_parquet(tmp, index=False)
+    os.replace(tmp, d / f"{row['name']}.parquet")
+
+
+def _finished_row(out_dir, cfg: RunConfig) -> dict | None:
+    """The saved row of ``cfg`` if it was run from this clean commit with the same resolved
+    scenario; else None (run it again)."""
+    import pandas as pd
+
+    from . import provenance
+
+    p = Path(out_dir) / "summaries" / f"{cfg.name}.parquet"
+    if not p.exists():
+        return None
+    row = pd.read_parquet(p).iloc[0].to_dict()
+    sha, dirty = provenance.git_state()
+    if sha is None or dirty or bool(row.get("prov.git_dirty", True)):  # NaN / missing: not clean
+        return None
+    if row.get("prov.git_sha") != sha or row.get("prov.config_hash") != provenance.config_hash(cfg.scenario()):
+        return None
+    return row
+
+
 def _save_events(out_dir, name: str, ev: list[dict]) -> None:
     """Final events for one run, written as soon as it finishes (replaces the checkpoint)."""
     if out_dir is None:
@@ -149,8 +182,14 @@ def run_sweep(
     n_jobs: int | None = None,
     threads_per_job: int | None = None,
     progress: bool = True,
+    reuse: bool = True,
 ):
     """Run ``configs`` across processes; returns a pandas DataFrame of summaries.
+
+    Each run's row is written to ``out_dir/summaries/<name>.parquet`` as soon as it finishes,
+    so a killed sweep keeps its finished runs. With ``reuse`` (default), a run whose row is
+    already there from the same clean commit and the same resolved scenario (config hash) is
+    not run again: rerunning a killed sweep into the same folder finishes it.
 
     Workers are spawned on every platform, so call this from inside an
     ``if __name__ == "__main__":`` block, or worker processes crash on start.
@@ -163,15 +202,26 @@ def run_sweep(
     cpus = os.cpu_count() or 1
     n_jobs = n_jobs or min(len(configs), max(1, cpus // 4))
     threads_per_job = threads_per_job or max(1, cpus // n_jobs)
-    _warm_jit()
-
     rows = []
-    if n_jobs == 1:
-        _init_worker(threads_per_job)
+    if reuse and out_dir is not None:
         for c in configs:
+            r = _finished_row(out_dir, c)
+            if r is not None:
+                rows.append(r)
+        if rows and progress:
+            print(f"reusing {len(rows)} finished runs in {out_dir}", flush=True)
+    done = {r["name"] for r in rows}
+    todo = [c for c in configs if c.name not in done]
+    if todo:
+        _warm_jit()
+    if n_jobs == 1 or len(todo) <= 1:
+        if todo:
+            _init_worker(threads_per_job)
+        for c in todo:
             r, ev = run_one(c, out_dir)
             rows.append(r)
             _save_events(out_dir, c.name, ev)
+            _save_summary(out_dir, r)
             if progress:
                 print(f"[{len(rows)}/{len(configs)}] {c.name} {r['wall_s']:.0f}s", flush=True)
     else:
@@ -181,20 +231,18 @@ def run_sweep(
 
         with ProcessPoolExecutor(n_jobs, mp_context=multiprocessing.get_context("spawn"),
                                  initializer=_init_worker, initargs=(threads_per_job,)) as ex:
-            futs = {ex.submit(run_one, c, out_dir): c for c in configs}
+            futs = {ex.submit(run_one, c, out_dir): c for c in todo}
             for f in as_completed(futs):
                 r, ev = f.result()
                 rows.append(r)
                 _save_events(out_dir, futs[f].name, ev)
+                _save_summary(out_dir, r)
                 if progress:
                     print(f"[{len(rows)}/{len(configs)}] {futs[f].name} {r['wall_s']:.0f}s", flush=True)
 
     df = pd.DataFrame(rows).set_index("name").loc[names].reset_index()
     if out_dir is not None:
         out = Path(out_dir)
-        (out / "summaries").mkdir(parents=True, exist_ok=True)
-        for _, row in df.iterrows():  # one file per run: parallel sweeps into one folder don't clobber
-            pd.DataFrame([row]).to_parquet(out / "summaries" / f"{row['name']}.parquet", index=False)
         # summary.parquet: every run in this folder, rebuilt from the per-run files
         allrows = pd.concat([pd.read_parquet(p) for p in sorted((out / "summaries").glob("*.parquet"))],
                             ignore_index=True)

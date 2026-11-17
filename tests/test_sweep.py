@@ -106,3 +106,29 @@ def test_response_inputs_extend_the_uncertain_set_and_load():
         assert 0.07 <= sc.ablation.thermal_coupling <= 0.25 and sc.ablation.melt_policy == "cap"
         assert 0.5 <= sc.ablation.cm_scale_md <= 1.0
         assert 50.0 / 3.0 <= c.overrides["ablation.cm_n_per_mw"] <= 100.0
+
+
+def test_finished_runs_are_saved_and_reused(tmp_path, monkeypatch):
+    import talos.sweep as sweep
+    from talos import provenance
+
+    monkeypatch.setattr(provenance, "git_state", lambda: ("abc123", False))  # a clean commit
+    first = run_sweep([tiny("a"), tiny("b")], tmp_path, n_jobs=1, threads_per_job=1, progress=False)
+    assert sorted(p.name for p in (tmp_path / "summaries").glob("*.parquet")) == ["a.parquet", "b.parquet"]
+
+    ran = []
+    real = sweep.run_one
+    monkeypatch.setattr(sweep, "run_one", lambda c, out=None: (c.name.startswith("_") or ran.append(c.name), real(c, out))[1])  # _warm: JIT warm-up
+    # "a" is unchanged and reused; "b" has a new scenario and runs again
+    again = run_sweep([tiny("a"), tiny("b", **{"run.seed": 9})], tmp_path, n_jobs=1, threads_per_job=1,
+                      progress=False)
+    assert ran == ["b"]
+    assert again.loc[0, "wall_s"] == first.loc[0, "wall_s"]
+    # another commit, a dirty tree, or reuse=False: everything runs
+    monkeypatch.setattr(provenance, "git_state", lambda: ("def456", False))
+    run_sweep([tiny("a")], tmp_path, n_jobs=1, threads_per_job=1, progress=False)
+    monkeypatch.setattr(provenance, "git_state", lambda: ("def456", True))
+    run_sweep([tiny("a")], tmp_path, n_jobs=1, threads_per_job=1, progress=False)
+    monkeypatch.setattr(provenance, "git_state", lambda: ("def456", False))
+    run_sweep([tiny("a")], tmp_path, n_jobs=1, threads_per_job=1, progress=False, reuse=False)
+    assert ran == ["b", "a", "a", "a"]
