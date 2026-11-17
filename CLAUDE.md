@@ -90,7 +90,8 @@ up to 2026-11-12) and under `runs/` (gitignored).
   is bit-identical to its Python fallback.
 - Source files use CRLF line endings.
 - No GPL code in core (dSGP4, NASA-breakup-model-cpp); poliastro is archived; MSIS is
-  non-commercial, so only the derived density table is shipped. ORDEM and DAS are NASA SUA
+  non-commercial, so only the derived density table is shipped (the MIT `LICENSE` covers the
+  code; whether that table may be used commercially is not settled). ORDEM and DAS are NASA SUA
   software: their tables stay out of git.
 - Compare variants at equal run length and do not annualise short runs: removals ramp for
   months, then fall. Do not quote absolute dollars; cost coefficients are picks.
@@ -149,7 +150,7 @@ up to 2026-11-12) and under `runs/` (gitignored).
 | Station keeping | `[cost] drag_*`, `sk_*` | drag make-up costed, Hall Isp 1500 s | picks; negligible (< 1 m/s) |
 | Platform impacts | `[survival]` | lethal ≥ 1 cm on 10 m² bus; radiator puncture ≥ 1 mm on 10 % of area, zenith / nadir faces | 1 cm **sourced** (weak); rest picks |
 | Uncertainty ranges | `talos.sweep.UNCERTAIN_INPUTS` | η₂, Cm, η₁, thrust angle, wall-plug, sun exclusion, settle | sourced ranges where the table has one, else picks |
-| Response ranges | `talos.sweep.RESPONSE_INPUTS` (`run_uncertainty.py --response`) | the above, with Cm 16.7–100 N/MW, `cm_scale_md` 0.5–1, fragmentation 0–1 %/burst, thermal coupling 0.07–0.25 | brackets from the rows above; not yet run on the ORDEM sky |
+| Response ranges | `talos.sweep.RESPONSE_INPUTS` (`run_uncertainty.py --response`) | the above, with Cm 16.7–100 N/MW, `cm_scale_md` 0.5–1, fragmentation 0–1 %/burst, thermal coupling 0.07–0.25 | brackets from the rows above; run once per melt policy (32 samples, 30 days, `design.toml`, commit 73ae64b; `runs/response_30d_*`) |
 
 ## Validation gates
 | Gate | Status |
@@ -187,6 +188,17 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
 - **Capping bursts at the melt limit works only with a jitter allowance.** A cap on
   commanded fluence costs 78–99 % of early removals. With `melt_margin = 3` it costs
   0 / 5 / 12 % of debris-years at 7 / 15 / 25 % coupling (7-day runs, one seed).
+- **Across the response ranges, firing through the melt limit is a net debris source half
+  the time.** 32-sample LHS over `RESPONSE_INPUTS`, 30 days, design config: the population
+  grows in 16 of 32 samples with `melt_policy = "fragment"` and in 2 of 32 with the cap at
+  `melt_margin = 3`. The cap gives up ~4 % of debris-years (median; 11 % at the 95th
+  percentile) and ~45 % of removed objects, and sheds ~6× fewer fragments. Cost per
+  debris-year prefers the fragment policy by ~7 %, because it does not charge for fragments.
+  Rank correlations: Cm drives both cost (−0.78 cap, −0.74 fragment) and net population
+  change (−0.68, −0.78); thermal coupling is second (cost +0.45 / +0.38, net change +0.53);
+  fragmentation per burst +0.26 on cost, +0.3 to +0.4 on net change; η₂, η₁, thrust angle,
+  settle and `cm_scale_md` are below ~0.35, which is noise at 32 samples. Growth cases sit
+  at low Cm (mostly < 35 N/MW) with coupling above ~0.13.
 - **The μ model moves removal counts (×1.2–2.6), not cost per debris-year (±1 %).**
 - **Large debris needs concentrated fire and pulse energy.** Greedy removes 0–1 objects
   ≥ 9 cm in 30 days on the depleted sky; an exclusive focus campaign removes 9–29.
@@ -211,9 +223,9 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
 ## Next steps
 - Melt gate: jitter-aware cap (expected delivered fluence); a fragment charge in cost per
   debris-year; 30-day runs and seeds.
-- Run the response bands on the ORDEM sky (`run_uncertainty.py N 30 --response`, once per
-  melt policy; overnight). The ranges are in `RESPONSE_INPUTS`; the μ model is still a
-  separate comparison.
+- Response bands (`run_uncertainty.py N 30 --response`, ~1 h per policy at N = 32): repeat
+  with a second LHS seed and more samples before quoting the smaller correlations; add the
+  μ model and `melt_margin` as axes; rerun on the day-720 sky.
 - Supercap bank: confirm the BOSC test voltage and depth from the paper itself, then set
   the specific energy for the 4.5 M rating.
 - Seeds on the leading designs (control, d027, d002, d007, d012).
@@ -227,6 +239,6 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
 - Debris lifetimes with SRP; absolute pointing budget; PROOF albedo on by default.
 - Validation: orekit / STELA propagation check, MASTER population cross-check, ODPO vs
   ESA F10.7.
-- Repo: no LICENSE or user-facing README yet. Gate-4 and DAS
+- Repo: no user-facing README yet. Gate-4 and DAS
   comparison tables are not committed as CSV fixtures.
 - Admin: Space-Track.org registration; consider contacting WVU (Hang Woon Lee lab).

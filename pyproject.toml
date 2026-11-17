@@ -7,6 +7,7 @@ name = "talos"
 version = "0.0.1"
 description = "TALOS: Monte Carlo engagement sim for space-based laser debris removal"
 requires-python = ">=3.11"  # tomllib
+license = {text = "MIT"}
 dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
