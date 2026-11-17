@@ -258,8 +258,9 @@ def integrate_burst(
     With ``rng=None`` the result is the deterministic expectation (eta1 mean,
     cos(mean off-axis angle) along the LOS, no jitter). With an rng, eta1, off-axis deflection and pointing jitter
     are sampled per pulse (eta1 and deflection per burst with ``params.attitude_model = "per_burst"``).
-    ``pointing_bias``: (2,) constant pointing offset [rad] for the burst (orbit-knowledge /
-    centroiding error), added to the per-pulse jitter.
+    ``pointing_bias``: pointing offset [rad] added to the per-pulse jitter: (2,) constant
+    for the burst, or (P, 2) per pulse (``Knowledge.pointing_offsets``: boresight, centroid,
+    drift, point-ahead).
     Melt gate (``params.thermal_coupling`` > 0): with ``melt_policy = "cap"`` the burst ends
     at the last pulse that keeps the commanded (on-axis) fluence sum within the melt limit,
     the worst case of every pulse landing centred (the platform cannot see where they land);
@@ -292,7 +293,9 @@ def integrate_burst(
     else:
         if pointing_bias is not None and np.any(pointing_bias != 0):
             # bias + 2-axis Gaussian jitter, Gaussian spot of 1/e^2 radius ~ spot_diameter/2
-            ang = np.asarray(pointing_bias, float)[None, :] + jitter_rad * rng.standard_normal((P, 2))
+            pb = np.asarray(pointing_bias, float)
+            pb = pb[:P] if pb.ndim == 2 else pb[None, :]  # (P, 2) offsets cut with a capped burst
+            ang = pb + jitter_rad * rng.standard_normal((P, 2))
             offset = R * np.hypot(ang[:, 0], ang[:, 1])
             w = spot_diameter(R, laser) / 2.0
             phi = phi * np.exp(-2.0 * (offset / w) ** 2)

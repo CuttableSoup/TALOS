@@ -141,6 +141,7 @@ _SUFFIXES: dict[str, tuple[str, Any]] = {
     "_nm": ("_m", lambda x: x * 1e-9),
     "_ps": ("_s", lambda x: x * 1e-12),
     "_urad": ("_rad", lambda x: x * 1e-6),
+    "_urad_s": ("_rad_s", lambda x: x * 1e-6),
 }
 # keys whose SI field has no unit suffix
 _ALIASES: dict[str, tuple[str, Any]] = {
@@ -317,7 +318,8 @@ def build(sc: Scenario) -> Built:
     dyn = (PopulationDynamics(sc.dynamics, p, float(p.n_real) / n, np.random.default_rng(sc.run.seed + 2),
                               source=source, epoch_jd=julian_date(sc.run.epoch))
            if sc.dynamics.enabled else None)
-    know = (Knowledge(sc.knowledge, np.random.default_rng(sc.run.seed + 5)) if sc.knowledge.active else None)
+    know = (Knowledge(sc.knowledge, np.random.default_rng(sc.run.seed + 5), seed=sc.run.seed)
+            if sc.knowledge.active else None)
     return Built(plats, pop, sc.ablation, env, planner, rng, make_atmosphere(sc), dyn, know)
 
 
@@ -336,7 +338,11 @@ _LEGACY = {"dynamics.srp": False, "dynamics.srp_cr": 1.2,
            "ablation.thermal_coupling": 0.0, "ablation.melt_enthalpy_j_kg": 976e3,
            "ablation.melt_margin": 1.0, "ablation.melt_policy": "fragment",
            # jitter-aware melt cap added 2026-11-17
-           "ablation.melt_cap_basis": "commanded"}
+           "ablation.melt_cap_basis": "commanded",
+           # pointing error budget added 2026-11-17, off by default
+           "knowledge.boresight_bias_rad": 0.0, "knowledge.centroid_rad": 0.0,
+           "knowledge.centroid_ref_mag": 14.0, "knowledge.drift_rad_s": 0.0,
+           "knowledge.point_ahead_frac": 0.0}
 
 
 # sections newer than some checkpoints on disk; default values of these match "absent"

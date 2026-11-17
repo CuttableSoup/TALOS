@@ -192,6 +192,19 @@ def _ablation_fragments(pop: DebrisPopulation, j: int, el, tm: float, params: Ab
                             weight=pop.weight[j], albedo=pop.albedo[j], epoch_s=tm, material=pop.material[j])
 
 
+def _burst_mag(knowledge, env, plat, pop: DebrisPopulation, j: int, tp, st) -> float | None:
+    """Target V magnitude at mid-burst for the centroid term; None without [sun] or the term."""
+    if env is None or knowledge.cfg.centroid_rad <= 0 or not len(tp):
+        return None
+    from .screening import apparent_magnitude
+
+    k = len(tp) // 2
+    s = np.asarray(env.sun_hat(np.array([tp[k]])), float).reshape(1, 1, 3)
+    return float(apparent_magnitude(st[0][k].reshape(1, 1, 3), st[1][k].reshape(1, 1, 3), s,
+                                    np.array([0.5 * pop.diameter_m[j]]), np.array([pop.albedo[j]]),
+                                    plat.atp.earth_background_penalty_mag).ravel()[0])
+
+
 def _write_elements(pop: DebrisPopulation, j: int, el) -> None:
     for name in ("a", "e", "i", "raan", "argp", "M"):
         getattr(pop.elements, name)[j] = getattr(el, name)
@@ -483,10 +496,15 @@ def run_engagements(
 
                 j = best.debris_index
                 tp = pulse_times(best.t_start, best.t_stop - best.t_start, plat.laser.prf_hz)
+                st = burst_states(plat, pop, j, tp)
+                bias = None
+                if knowledge is not None and rng is not None:
+                    bias = knowledge.pointing_offsets(plat.name, tp, st[0], st[1],
+                                                      _burst_mag(knowledge, env, plat, pop, j, tp, st))
                 res = integrate_burst(
-                    *burst_states(plat, pop, j, tp), plat.laser, float(pop.laser_areal_density(j)), params,
+                    *st, plat.laser, float(pop.laser_areal_density(j)), params,
                     jitter_rad=plat.atp.jitter_rad if rng is not None else 0.0, rng=rng,
-                    pointing_bias=knowledge.pointing_bias() if knowledge is not None and rng is not None else None,
+                    pointing_bias=bias,
                     cap_jitter_rad=plat.atp.jitter_rad,  # same cap as the scheduler's prediction
                 )
                 # the melt cap ends the burst (and its energy / heat / storage cycle) early

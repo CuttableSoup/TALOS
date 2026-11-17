@@ -67,7 +67,7 @@ up to 2026-11-12) and under `runs/` (gitignored).
 | `resources` | battery + PCM / radiator state machine gating bursts |
 | `lifetime`, `dynamics` | decay and removal test; daily population step, sources, breakups |
 | `simulation` | the run loop, events, checkpoints |
-| `knowledge`, `risk`, `survival`, `cost`, `metrics` | orbit-knowledge error, shell residence / collisions, platform impacts, mass / life / cost, summaries |
+| `knowledge`, `risk`, `survival`, `cost`, `metrics` | orbit-knowledge error and the pointing error budget, shell residence / collisions, platform impacts, mass / life / cost, summaries |
 | `sweep`, `config` | parallel sweep driver, Latin hypercube; TOML scenarios |
 | `provenance` | git SHA, config hash and data-table hashes stamped on rows and checkpoints |
 | `das`, `oscar` | lifetime cross-checks against NASA DAS and ESA DRAMA/OSCAR |
@@ -133,6 +133,7 @@ up to 2026-11-12) and under `runs/` (gitignored).
 | Detection | `[atp] detection_model` | passive optical: acquire ≤ 16 mag for 10 s, track ≤ 18, +3 mag on sunlit Earth | picks |
 | Target lighting / sun exclusion | `require_target_sunlit`, `sun_exclusion_deg` | true; 30° | picks |
 | Pointing jitter | `ATPConfig.jitter_rad` | ~0.3 µrad | pick |
+| Pointing error budget | `[knowledge] boresight_bias_urad`, `centroid_urad` (at `centroid_ref_mag`, photon-noise scaling), `drift_urad_s`, `point_ahead_frac`; `pointing_bias_rad` (per burst, no stated cause) | 0 (off) | picks; Scharring 2018 cites σ 0.1 / 0.07 µrad requirements and ~0.1 µrad overall hit accuracy |
 | Settle / retarget | `ATPConfig.settle_s` | 5 s, not overlapped | guess |
 | Min burst | `ResourceConfig.min_burst_s` | 5 s | guess |
 | Wall-plug (elec → 355 nm) | `wallplug_eff` | 0.10 (0.04–0.17) | **sourced** chain; ATLAS flight 8.2 % at 532 nm |
@@ -277,7 +278,9 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
 - Platform placement / reconfiguration for the late mission (retarget altitude or RAAN at
   a checkpoint before any optimiser).
 - Radiator orientation and tube armour reconciled with the thermal model; meteoroid flux.
-- Debris lifetimes with SRP; absolute pointing budget; PROOF albedo on by default.
+- Pointing budget: sweep each term on the design (7–30 days) to find the allocation that
+  keeps debris-years within ~10 %; then the cap's jitter allowance from the whole budget.
+- Debris lifetimes with SRP; PROOF albedo on by default.
 - Validation: orekit / STELA propagation check, MASTER population cross-check, ODPO vs
   ESA F10.7.
 - Repo: no user-facing README yet. Gate-4 and DAS

@@ -216,6 +216,12 @@ propellant_usd_per_kg = 3000.0       # xenon / krypton
 od_sigma_pos_m = 0.0                 # per-axis state-estimate error at burst start (track + laser
 od_sigma_vel_m_s = 0.0               #   ranging: ~0.1 m / ~0.01 m/s, negligible; angles-only: much worse)
 pointing_bias_rad = 0.0              # per-axis constant pointing offset over a burst
+# pointing error budget (talos.knowledge), per axis, 1 sigma; all 0 = off. Allocation picks:
+boresight_bias_urad = 0.0            # [pick] tracker-to-laser boresight residual after calibration, fixed per platform
+centroid_urad = 0.0                  # [pick] track centroid error per burst at centroid_ref_mag (photon-noise scaling)
+centroid_ref_mag = 14.0              # [pick] V magnitude the centroid allocation refers to
+drift_urad_s = 0.0                   # [pick] line-of-sight drift rate during a burst (thermal / structural)
+point_ahead_frac = 0.0               # [pick] fractional point-ahead error (2 v_perp / c ~ 50-100 urad)
 
 [survival]                           # debris impacts on the platforms (talos.survival); needs
                                      # scripts/build_platform_flux.py (ORDEM), else columns are NaN
