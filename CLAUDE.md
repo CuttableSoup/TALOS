@@ -121,7 +121,7 @@ up to 2026-11-12) and under `runs/` (gitignored).
 | η₁ | `eta1_mean/kappa`, `eta1_basis` | Beta, mean 0.3, κ = 10; `along_beam` | mean and basis **sourced** (Phipps 2012, η_c = 0.3 after Liedahl); spread a guess |
 | Δv off-axis angle | `off_axis_*` | N(45°, 15°) clipped [0, 90°] | centre **sourced** (Scharring 2018: 45°, 40 % scatter); spread a guess |
 | Fragmentation | `fragment_prob_per_burst` | 0 (off) | **guess**: no published probability |
-| Target heating (melt gate) | `thermal_coupling`, `melt_enthalpy_j_kg`, `melt_margin`, `melt_policy` | 0 (off); 976 kJ/kg; 1; `fragment` | coupling **unsourced at 355 nm / 100 ps**: bracket 0.07–0.25 (Scharring 2018 simulation at 1064 nm: ≤ 7 % ultrashort, ≥ 20 % near onset for 100 ps and longer; measured 15–25 % typical); 0.02–0.125 at 10 ns IR (Keil 2023); enthalpy derived |
+| Target heating (melt gate) | `thermal_coupling`, `melt_enthalpy_j_kg`, `melt_margin`, `melt_policy`, `melt_cap_basis` | 0 (off); 976 kJ/kg; 1; `fragment`; `commanded` (`expected` scales the cap by the mean delivered fraction under jitter, 1/(1+4(σ/w)²) ≈ 0.20 at 0.3 µrad) | coupling **unsourced at 355 nm / 100 ps**: bracket 0.07–0.25 (Scharring 2018 simulation at 1064 nm: ≤ 7 % ultrashort, ≥ 20 % near onset for 100 ps and longer; measured 15–25 % typical); 0.02–0.125 at 10 ns IR (Keil 2023); enthalpy derived |
 | Debris count in band | `population.kind = "ordem"` | 75.9k, 1–10 cm, 600–1000 km | **sourced** (ORDEM 3.2); inclination mix is a fit to ORDEM flux spectra |
 | Areal density μ | `areal_density_model` | `sbm` (median 4.5 kg/m²) | **sourced** (NASA SBM); `hanada` variants give lighter fragments (median 2.2–3.0) |
 | Debris albedo | `albedo_median/log_sigma`, `albedo_model` | 0.1, lognormal σ 0.5 (`fixed`) | pick; `proof` (fragments 0.2, NaK 0.85) **sourced**, off |
@@ -188,6 +188,15 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
 - **Capping bursts at the melt limit works only with a jitter allowance.** A cap on
   commanded fluence costs 78–99 % of early removals. With `melt_margin = 3` it costs
   0 / 5 / 12 % of debris-years at 7 / 15 / 25 % coupling (7-day runs, one seed).
+- **The jitter-aware cap (`melt_cap_basis = "expected"`, margin 1) costs ~0 / 1 / 4 % of
+  debris-years at 7 / 15 / 25 % coupling and keeps 99 / 70 / 38 % of removed objects
+  (margin-3 cap: 84 / 35 / 18 %).** Its capped-burst counts (169 / 887 / 2233) match the
+  molten-burst counts of the fragment policy (161 / 892 / 2217), so it stops where the
+  delivered heat reaches the limit. With fragments charged, the fragment policy's cost per
+  net debris-year is −1 / +19 / +76 % against no gate; the expected cap's is 0 / +2 / +10 %.
+  Fragments add 0.6 / 16 / 44 % of the removed debris-years back. 7-day runs, design
+  config, one seed, commit 5971309 (`runs/compare_melt_exp_7d`); differences under ~1 %
+  are noise.
 - **Across the response ranges, firing through the melt limit is a net debris source half
   the time.** 32-sample LHS over `RESPONSE_INPUTS`, 30 days, design config: the population
   grows in 16 of 32 samples with `melt_policy = "fragment"` and in 2 of 32 with the cap at
@@ -210,9 +219,12 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
 - Fixed platform orbits; no constellation coordination or hand-off between platforms.
 - Detection is a hard magnitude threshold; settle time is a fixed 5 s (no slew dynamics).
 - Melt gate: no cooling within a burst, no heat carried between bursts, aluminium only,
-  no incidence angle; the cap margin is hand-set, not derived from the jitter.
-- Cost per debris-year does not charge for ablation fragments. Debris-year lifetimes are
-  drag-only (no SRP) and depend on the 200-yr cap.
+  no incidence angle. The `expected` cap allows for mean jitter loss only: not for unknown
+  pointing bias, nor for the scatter of the delivered sum about its mean.
+- `cost_per_debris_year_usd` does not charge for ablation fragments;
+  `cost_per_net_debris_year_usd` subtracts the fragments' natural lifetimes (from release,
+  200-yr cap), but not their collision risk. Debris-year lifetimes are drag-only (no SRP)
+  and depend on the 200-yr cap.
 - Not modelled: M² / thermal-lens transients at burst start, THG crystal detuning, array
   degradation, UV optics damage, radiator self-view, meteoroid flux.
 - ORDEM population: circular orbits, uncertainty files unused, power-law size inside each
@@ -221,8 +233,10 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
 - Results are one seed per variant unless stated.
 
 ## Next steps
-- Melt gate: jitter-aware cap (expected delivered fluence); a fragment charge in cost per
-  debris-year; 30-day runs and seeds.
+- Melt gate: 30-day runs and seeds of the `expected` cap vs the fragment policy, scored on
+  `cost_per_net_debris_year_usd`; rerun the response bands with the `expected` cap (it
+  should replace `melt_margin = 3` in `run_uncertainty.py`); a quantile allowance for the
+  scatter of the delivered sum; a fragment charge for collision risk, not just lifetime.
 - Response bands (`run_uncertainty.py N 30 --response`, ~1 h per policy at N = 32): repeat
   with a second LHS seed and more samples before quoting the smaller correlations; add the
   μ model and `melt_margin` as axes; rerun on the day-720 sky.
