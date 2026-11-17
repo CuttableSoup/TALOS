@@ -67,11 +67,16 @@ LARGE_TEST = {"campaign.enabled": True, "campaign.count": 0, "campaign.min_diame
 
 
 def configs(ds: list[dict], days: float, late_ckpt: str, late_day: float,
-            large_days: float = 0.0) -> list[RunConfig]:
+            large_days: float = 0.0, run_seed: int | None = None, early_only: bool = False) -> list[RunConfig]:
+    """``run_seed``: early-sky seed (population sample and engagement draws); the late sky
+    resumes the checkpoint, whose seed is fixed. ``early_only``: skip the late and large runs."""
     out = []
     for j, ovr in enumerate(ds):
         common = {**ovr, "run.checkpoint_days": 0.0}
-        out.append(RunConfig(f"d{j:03d}_early", DESIGN, {**common, "run.duration_days": days}))
+        seed = {} if run_seed is None else {"run.seed": run_seed}
+        out.append(RunConfig(f"d{j:03d}_early", DESIGN, {**common, **seed, "run.duration_days": days}))
+        if early_only:
+            continue
         out.append(RunConfig(f"d{j:03d}_late", DESIGN, {**common, "run.duration_days": late_day + days},
                              resume=late_ckpt, fresh_platforms=True))
         if large_days > 0:
@@ -164,6 +169,8 @@ if __name__ == "__main__":  # required on Windows (spawned workers re-import thi
     ap.add_argument("--large-test", type=float, default=0.0, metavar="DAYS",
                     help="also run the large-debris test (scripts/large_debris_test.py) for DAYS per design")
     ap.add_argument("--box", nargs="*", default=[], help="narrow lever ranges: key=lo:hi[:log]")
+    ap.add_argument("--run-seed", type=int, default=None, help="early-sky run.seed (default: the config's)")
+    ap.add_argument("--early-only", action="store_true", help="fly the early sky only (no late / large runs)")
     ap.add_argument("--designs-csv", default=None,
                     help="fly these designs instead of an LHS (CSV, one column per lever key)")
     a = ap.parse_args()
@@ -175,12 +182,14 @@ if __name__ == "__main__":  # required on Windows (spawned workers re-import thi
             ds = designs(a.n, a.seed, parse_box(a.box))
         out.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(ds).to_parquet(out / "designs.parquet")
-        cfgs = configs(ds, a.days, a.late_ckpt, a.late_day, a.large_test)
+        cfgs = configs(ds, a.days, a.late_ckpt, a.late_day, a.large_test, a.run_seed, a.early_only)
         done = {p.stem for p in (out / "summaries").glob("*.parquet")} if (out / "summaries").exists() else set()
         todo = [c for c in cfgs if c.name not in done]
         print(f"{len(ds)} designs, {len(todo)} of {len(cfgs)} runs to go", flush=True)
         if todo:
             run_sweep(todo, out_dir=out, n_jobs=a.jobs, threads_per_job=a.threads)
+    if a.early_only:
+        raise SystemExit(0)  # mission scores need the late sky
     res = score(out)
     pd.set_option("display.width", 250)
     print(res.round(3).to_string(index=False))
