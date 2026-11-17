@@ -182,6 +182,15 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
   supercapacitor bank the cycle rating decides the design ranking: at 0.5 M cycles storage
   limits life to 1.4–2.3 yr and d027 is cheapest; at 4.5 M every design reaches 5 yr and
   the highest-rate design wins.
+- **The melt cap does not reorder the leading designs.** With the `expected` cap at 15 %
+  coupling, the six leading designs (control, d027, d002, d007, d012 and one more;
+  `runs/leading_designs.csv`) lose 4–5 % of early-sky debris-years and −2 to +2 % on the
+  day-720 sky; whole-mission cost per debris-year rises 3–4 % at 0.5 M cycles (life
+  ~2 yr, early-sky dominated) and 0–2.5 % at 2.3 / 4.5 M. The 0.5 M ranking is unchanged
+  (d027 cheapest); at 2.3 / 4.5 M only neighbours within ~1 % swap, inside the ~1 %
+  seed-to-seed spread of early-sky debris-years (3 seeds). 30 days, commit 7d4ba73
+  (`runs/mc_validate_30d_cap*`) against the gate-off `runs/mc_validate_30d`. The late sky
+  is the gate-off design's day-720 checkpoint, on the parametric solar cycle.
 - **Pointing is a hard requirement.** A 0.3 µrad bias on top of 0.3 µrad jitter cuts
   removals ~70 %; 1 µrad stops the system. With the design jitter the target receives at
   most ~0.3 of the commanded fluence.
@@ -260,9 +269,8 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
 - Results are one seed per variant unless stated.
 
 ## Next steps
-- Re-baseline the design results with the melt cap on (`design.toml` now has it): seeds on
-  the leading designs, the d027 whole-mission run and the day-720 sky are all still quoted
-  with the gate off.
+- Re-baseline with the melt cap on: the d027 whole-mission run (running:
+  `runs/d027_2yr_cap`) and a day-720 sky lasered with the cap on the F10.7 table.
 - Melt gate: seeds on the 30-day comparison; a quantile allowance for the scatter of the
   delivered sum; a fragment charge for collision risk, not just lifetime.
 - Response bands (`run_uncertainty.py N 30 --response`, ~1 h per policy at N = 32): repeat
@@ -270,7 +278,7 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
   μ model and `melt_margin` as axes; rerun on the day-720 sky.
 - Supercap bank: confirm the BOSC test voltage and depth from the paper itself, then set
   the specific energy for the 4.5 M rating.
-- Seeds on the leading designs (control, d027, d002, d007, d012).
+- Seeds on the late sky (needs late-sky checkpoints from more than one seed).
 - Whole-mission run of d027 (`config/design_mc.toml`, 2 years, checkpointed; ~3 h),
   scored per debris-year; decide whether to size the mission to the light inventory (~2 yr).
 - Measurements to ask for: aluminium Cm and thermal coupling at 355 nm / 100 ps.
