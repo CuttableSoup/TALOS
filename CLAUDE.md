@@ -191,6 +191,15 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
   seed-to-seed spread of early-sky debris-years (3 seeds). 30 days, commit 7d4ba73
   (`runs/mc_validate_30d_cap*`) against the gate-off `runs/mc_validate_30d`. The late sky
   is the gate-off design's day-720 checkpoint, on the parametric solar cycle.
+- **Jitter is the largest design lever found; every bias term must stay under ~0.1 µrad.**
+  On the design with the cap (7 days, one seed, `runs/compare_pointing_7d`), debris-years
+  against the 0.3 µrad design jitter: jitter 0.1 / 0.2 / 0.4 µrad gives ×2.9 / ×1.66 /
+  ×0.65 (cost per net debris-year $159 / $264 / $640 vs $423). Each budget term added
+  alone: boresight 0.1 / 0.2 / 0.3 µrad −12 / −35 / −58 %; centroid (at V = 14) 0.1 / 0.3
+  µrad −14 / −47 %; drift 0.01 / 0.03 µrad/s (0.2 / 0.6 µrad by the end of a 20 s burst)
+  −9 / −36 %; point-ahead error 0.2 / 0.5 % of 2 v⊥/c −0.3 / −4 %. Per-burst biases cost
+  more than their quadrature share of the mean, because whole bursts fall below threshold.
+  The cap's jitter allowance ignores these biases, so with them it is conservative.
 - **Pointing is a hard requirement.** A 0.3 µrad bias on top of 0.3 µrad jitter cuts
   removals ~70 %; 1 µrad stops the system. With the design jitter the target receives at
   most ~0.3 of the commanded fluence.
@@ -286,8 +295,9 @@ Use these when choosing what to build or sweep; the numbers behind them are in g
 - Platform placement / reconfiguration for the late mission (retarget altitude or RAAN at
   a checkpoint before any optimiser).
 - Radiator orientation and tube armour reconciled with the thermal model; meteoroid flux.
-- Pointing budget: sweep each term on the design (7–30 days) to find the allocation that
-  keeps debris-years within ~10 %; then the cap's jitter allowance from the whole budget.
+- Pointing budget: combined allocations (all terms at once) at 30 days and seeds; the
+  jitter itself is worth more than any other lever, so cost it as hardware (beam director,
+  isolation) rather than a free pick; the cap's allowance from the whole budget.
 - Debris lifetimes with SRP; PROOF albedo on by default.
 - Validation: orekit / STELA propagation check, MASTER population cross-check, ODPO vs
   ESA F10.7.
